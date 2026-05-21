@@ -122,43 +122,6 @@ class JARVIS:
         self.executor.run(accion, params)
         self.memory.add_assistant(resp)
 
-    def run_wake_word(self):
-        self.tts.say(f"RICK activado. Dime '{self.cfg['wake_word']}' para hablar.")
-        log.info(f"Escuchando wake word '{self.cfg['wake_word']}'...")
-
-        while True:
-            audio = self.vad.record()
-            if audio is None:
-                continue
-            texto = transcribir(self.whisper_model, audio, self.cfg["language"])
-            if not texto:
-                continue
-
-            wake = self.cfg["wake_word"]
-            if wake not in texto:
-                log.debug(f"Ignorado (sin wake word): {texto}")
-                continue
-
-            # Extraer comando post-wake-word
-            comando = texto.split(wake, 1)[-1].strip(" ,.")
-            if not comando or len(comando) < 3:
-                self.tts.say("Dime.")
-                audio2 = self.vad.record()
-                if audio2 is None:
-                    continue
-                comando = transcribir(self.whisper_model, audio2, self.cfg["language"])
-
-            if not comando:
-                continue
-
-            try:
-                self.process_command(comando)
-            except KeyboardInterrupt:
-                break
-            except Exception as e:
-                log.error(f"Error procesando comando: {e}")
-                self.tts.say("Error inesperado. Continuando.")
-
     def run_push(self):
         self.tts.say("RICK listo. Enter para hablar, Enter para parar.")
         print("\n\033[0;36m  Enter = grabar/parar  |  Ctrl+C = salir\033[0m\n")
@@ -282,7 +245,7 @@ class JARVIS:
         elif self.args.push:
             self.run_push()
         else:
-            self.run_wake_word()
+            self.run_realtime()
 
 
 def parse_args():
@@ -300,7 +263,6 @@ def parse_args():
     ap.add_argument("--model",      default=None,            help="Modelo Whisper: tiny/base/small/medium/large")
     ap.add_argument("--llm",        default=None,            help="Modelo Ollama (ej: llama3:8b)")
     ap.add_argument("--lang",       default=None,            help="Idioma Whisper (ej: en, es, fr)")
-    ap.add_argument("--wake",       default=None,            help="Wake word (ej: 'hey rick')")
     return ap.parse_args()
 
 
@@ -324,7 +286,6 @@ def main():
     if args.model:    CFG["whisper_model"] = args.model
     if args.llm:      CFG["model"]         = args.llm
     if args.lang:     CFG["language"]      = args.lang
-    if args.wake:     CFG["wake_word"]     = args.wake.lower()
     if args.no_voice: CFG["no_voice"]      = True
 
     # Modo daemon

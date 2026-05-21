@@ -69,9 +69,6 @@ sudo usermod -aG input $USER
 # Realtime (recomendado) — Escucha continua, responde automáticamente
 python jarvis.py --realtime
 
-# Wake word — Detecta palabra clave, luego ejecuta comando
-python jarvis.py
-
 # Push-to-talk — Presiona Enter para grabar
 python jarvis.py --push
 ```
@@ -132,7 +129,6 @@ Editar `rick/config.py`:
 {
     "provider": "anthropic",           # "anthropic" | "gemini" | "deepseek" | "ollama"
     "model": "claude-haiku-4-5",       # Modelo según proveedor
-    "wake_word": "oye rick",           # Palabra clave para activar
     "whisper_model": "small",          # tiny | base | small | medium | large
     "language": "es",                  # Idioma (es | en | fr | ...)
     "voice_rate": 190,                 # Velocidad de voz (wpm)
@@ -234,7 +230,6 @@ sudo systemctl restart ydotoold
 | Modo | Activación | Ventajas | Desventajas |
 |------|------------|----------|------------|
 | **realtime** | VAD automático | Natural, conversacional | Falsos positivos posibles |
-| **wake-word** | Palabra clave + cmd | Eficiente, preciso | Menos natural |
 | **push-to-talk** | Presiona Enter | Control total | Manual, menos fluido |
 
 ## 🤝 Contribuciones

@@ -2,19 +2,18 @@ import os
 
 CFG = {
     # Proveedor LLM: "ollama" | "gemini" | "deepseek" | "anthropic"
-    "provider":      "anthropic",
+    "provider":      "deepseek",
 
     # Modelo según el proveedor:
     # - ollama:    "qwen3:8b", "llama3:8b", etc.
     # - gemini:    "gemini-2.0-flash", "gemini-1.5-pro", etc.
     # - deepseek:  "deepseek-chat", "deepseek-reasoner", etc.
     # - anthropic: "claude-opus-4", "claude-sonnet-4", etc.
-    "model":         "claude-haiku-4-5",
+    "model":         "deepseek-chat",
 
     # Ollama
     "ollama_url":    "http://localhost:11434/api/generate",
 
-    "wake_word":     "oye rick",
     "whisper_model": "small",       # tiny | base | small | medium | large
     "language":      "es",
     "voice_rate":    190,
@@ -35,7 +34,7 @@ CFG = {
     "daemon_mode":   True,
     # Configuración modo agente
     "agent_enabled":         True,
-    "agent_model":           "claude-haiku-4-5",
+    "agent_model":           "deepseek-v4-flash",
     "agent_max_steps":       20,
     "agent_timeout_s":       300,
     "max_tokens_reactive":   6144,
