@@ -86,6 +86,18 @@ AGENT_TOOLS = [
         }
     },
     {
+        "name": "RENOMBRAR",
+        "description": "Renombra un archivo o directorio.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "origen": {"type": "string"},
+                "destino": {"type": "string"}
+            },
+            "required": ["origen", "destino"]
+        }
+    },
+    {
         "name": "BORRAR_ARCHIVO",
         "description": "Borra un archivo.",
         "input_schema": {
@@ -243,10 +255,6 @@ def _is_complex_task(texto: str) -> bool:
         "calcula", "procesa", "transforma", "convierte",
     }
     texto_lower = texto.lower()
-    # Tareas largas probablemente son complejas
-    if len(texto.split()) > 15:
-        return True
-    # Palabras clave de programación/automatización
     for kw in complex_keywords:
         if kw in texto_lower:
             return True
@@ -444,9 +452,10 @@ Si la tarea está completa, usa:
             try:
                 json_str = _extract_json(raw_response)
                 resp = json.loads(json_str)
-            except json.JSONDecodeError:
-                log.error(f"[Agente] JSON parsing falló: {raw_response[:200]}")
-                return f"Error parseando respuesta del LLM. Respuesta: {raw_response[:200]}"
+            except (json.JSONDecodeError, ValueError):
+                log.warning(f"[Agente] JSON parsing falló, reintentando: {raw_response[:120]}")
+                conversation.append(f"[ERROR]: No respondiste con JSON válido. Reintenta usando solo JSON puro sin markdown.")
+                continue
 
             accion = resp.get("accion", "CONVERSAR").upper()
             params = resp.get("parametros", {})
@@ -493,7 +502,7 @@ def _call_ollama(prompt: str, system_prompt: str, cfg: dict) -> str:
     import requests
 
     payload = {
-        "model": cfg.get("model", "llama2"),
+        "model": cfg.get("agent_model") or cfg.get("model", "llama2"),
         "prompt": prompt,
         "system": system_prompt,
         "stream": False,
@@ -531,7 +540,7 @@ def _call_gemini(prompt: str, system_prompt: str, cfg: dict) -> str:
     try:
         genai.configure(api_key=api_key)
         model = genai.GenerativeModel(
-            model_name=cfg.get("model", "gemini-2.0-flash"),
+            model_name=cfg.get("agent_model") or cfg.get("model", "gemini-2.0-flash"),
             system_instruction=system_prompt,
         )
         response = model.generate_content(prompt)
@@ -558,7 +567,7 @@ def _call_deepseek(prompt: str, system_prompt: str, cfg: dict) -> str:
             base_url="https://api.deepseek.com",
         )
         response = client.chat.completions.create(
-            model=cfg.get("model", "deepseek-chat"),
+            model=cfg.get("agent_model") or cfg.get("model", "deepseek-chat"),
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},

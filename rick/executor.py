@@ -1,6 +1,7 @@
 import datetime
 import time
 import os
+import shlex
 import webbrowser
 import urllib.parse
 
@@ -27,6 +28,25 @@ class ActionExecutor:
 
     def set_hablar(self, fn):
         self._hablar = fn
+
+    def validate_tools(self, agent_tools: list[dict]):
+        handler_names = {
+            "ABRIR_APP", "ABRIR_URL", "BUSCAR_WEB", "SCREENSHOT", "SISTEMA_INFO",
+            "PROCESO_INFO", "EJECUTAR_CMD", "APAGAR", "REINICIAR",
+            "VOLUMEN_SUBIR", "VOLUMEN_BAJAR", "VOLUMEN_MUTE",
+            "ESCRIBIR", "ATAJO", "NUEVA_PESTANA", "CERRAR_VENTANA",
+            "MINIMIZAR", "MAXIMIZAR", "CLIPBOARD_LEER", "CLIPBOARD_ESCRIBIR",
+            "CREAR_ARCHIVO", "LEER_ARCHIVO", "MOVER_ARCHIVO", "COPIAR_ARCHIVO",
+            "BORRAR_ARCHIVO", "CREAR_CARPETA", "IR", "INFO_DIR", "LISTAR_DIR",
+            "RENOMBRAR", "BUSCAR_ARCHIVO", "NOTA_GUARDAR", "NOTA_LEER",
+            "NOTA_BORRAR", "RECORDATORIO", "CLIMA", "TRADUCIR",
+            "EJECUTAR_PYTHON", "ESCRIBIR_Y_EJECUTAR", "LEER_DIR_RECURSIVO",
+            "BUSCAR_EN_ARCHIVOS", "GIT_CMD", "CONVERSAR", "ERROR", "MUSICA",
+        }
+        for tool in agent_tools:
+            name = tool["name"]
+            if name not in handler_names:
+                log.warning(f"Herramienta '{name}' en AGENT_TOOLS no tiene handler en executor")
 
     def hablar(self, text: str):
         if self._hablar:
@@ -96,6 +116,7 @@ class ActionExecutor:
             "GIT_CMD":           self._git_cmd,
             "CONVERSAR":         lambda p: None,
             "ERROR":             lambda p: None,
+            "MUSICA":            self._musica,
         }
         fn = handlers.get(a)
         if fn:
@@ -153,6 +174,13 @@ class ActionExecutor:
     def _buscar_web(self, p):
         q = urllib.parse.quote_plus(p.get("query", ""))
         webbrowser.open(f"https://www.google.com/search?q={q}")
+        return None
+
+    _MUSIC_URL = "https://www.youtube.com/watch?v=CFGLoQIhmow&list=RDCFGLoQIhmow&start_radio=1"
+
+    def _musica(self, p):
+        webbrowser.open(self._MUSIC_URL)
+        self.hablar("Abriendo música, amo.")
         return None
 
     def _screenshot(self, p):
@@ -565,8 +593,8 @@ class ActionExecutor:
         if not patron.strip():
             return "Error: patrón vacío."
         try:
-            ext_flag = f"--include='*{extension}'" if extension else ""
-            cmd = f"grep -rn {ext_flag} {repr(patron)} {repr(directorio)} 2>/dev/null | head -50"
+            ext_flag = f"--include={shlex.quote('*' + extension)}" if extension else ""
+            cmd = f"grep -rn {ext_flag} {shlex.quote(patron)} {shlex.quote(directorio)} 2>/dev/null | head -50"
             result = ejecutar_cmd(cmd, timeout=15)
             return result or "No se encontraron coincidencias."
         except Exception as e:
@@ -582,7 +610,7 @@ class ActionExecutor:
             first_word = subcmd.split()[0].lower()
             if first_word not in safe_cmds:
                 return f"Subcomando git no permitido: {first_word}"
-            cmd = f"git -C {repr(directorio)} {subcmd}"
+            cmd = f"git -C {shlex.quote(directorio)} {' '.join(shlex.quote(p) for p in subcmd.split())}"
             result = ejecutar_cmd(cmd, timeout=60)
             return result or "Git comando ejecutado sin output."
         except Exception as e:

@@ -20,7 +20,7 @@ from .tts import TTS
 from .memory import ConversationMemory, NotesManager
 from .reminders import ReminderManager
 from .executor import ActionExecutor
-from .agent import run_agent_task, _is_complex_task
+from .agent import run_agent_task, _is_complex_task, AGENT_TOOLS
 
 
 class JARVIS:
@@ -195,20 +195,17 @@ class JARVIS:
         self.tts.say("Modo conversación activado. Hablo cuando quieras.")
         print("\033[0;36m🎤 Escuchando en tiempo real... (Ctrl+C para salir)\033[0m\n")
 
-        silence_count = 0
-        max_silence = 0.5
+        silence_ticks = 0
 
         while True:
             audio = self.vad.record()
             if audio is None:
-                silence_count += 1
-                if silence_count % 10 == 0:
+                silence_ticks += 1
+                if silence_ticks % 10 == 0:
                     print(".", end="", flush=True)
-                if silence_count > max_silence * 12:
-                    silence_count = 0
                 continue
 
-            silence_count = 0
+            silence_ticks = 0
             print("\n🔴 Procesando...", end="", flush=True)
 
             texto = transcribir(self.whisper_model, audio, self.cfg["language"])
@@ -227,6 +224,7 @@ class JARVIS:
 
     def start(self):
         log.info("Iniciando RICK v2...")
+        self.executor.validate_tools(AGENT_TOOLS)
         self._load_whisper()
         if self.cfg.get("provider", "ollama") == "ollama":
             self._check_ollama()
@@ -264,6 +262,7 @@ def parse_args():
     ap.add_argument("--list-mics",  action="store_true",     help="Listar dispositivos de audio")
     ap.add_argument("--model",      default=None,            help="Modelo Whisper: tiny/base/small/medium/large")
     ap.add_argument("--llm",        default=None,            help="Modelo Ollama (ej: llama3:8b)")
+    ap.add_argument("--provider",   default=None,            help="Proveedor LLM: ollama | gemini | deepseek | anthropic")
     ap.add_argument("--lang",       default=None,            help="Idioma Whisper (ej: en, es, fr)")
     return ap.parse_args()
 
@@ -279,14 +278,33 @@ def main():
     args = parse_args()
     setup_logging(logging.DEBUG if args.debug else logging.INFO)
 
+    if args.daemon:
+        log_dir = os.path.expanduser("~/.rick")
+        os.makedirs(log_dir, exist_ok=True)
+        fh = logging.FileHandler(os.path.join(log_dir, "rick.log"))
+        fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+        logging.getLogger().addHandler(fh)
+        log.info("Log a archivo activado: ~/.rick/rick.log")
+
     if args.history:
         mem = ConversationMemory(CFG["history_file"], CFG["max_ctx_turns"])
         mem.print_history(n=30)
         sys.exit(0)
 
+    if args.list_mics:
+        import sounddevice as sd
+        print("\nDispositivos de audio disponibles:\n")
+        for i, dev in enumerate(sd.query_devices()):
+            marker = " ← (defecto)" if i == sd.default.device[0] else ""
+            io = "IN" if dev["max_input_channels"] > 0 else "OUT"
+            print(f"  [{i}] {io}  {dev['name']}{marker}")
+        print()
+        sys.exit(0)
+
     # Aplicar overrides de args
     if args.model:    CFG["whisper_model"] = args.model
     if args.llm:      CFG["model"]         = args.llm
+    if args.provider: CFG["provider"]      = args.provider
     if args.lang:     CFG["language"]      = args.lang
     if args.no_voice: CFG["no_voice"]      = True
 

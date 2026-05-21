@@ -1,3 +1,4 @@
+import shlex
 import subprocess
 import shutil
 import os
@@ -29,6 +30,27 @@ _DIR_ALIASES = {
     "imagens": "Pictures",
 }
 
+_SENSITIVE_PATHS = [
+    "/etc", "/proc", "/sys", "/dev", "/boot", "/root",
+    ".ssh", ".gnupg", ".config/opencode",
+]
+
+
+def _es_ruta_segura(resolved: str) -> bool:
+    home = os.path.expanduser("~")
+    resolved = os.path.normpath(os.path.realpath(resolved) if os.path.exists(resolved) else resolved)
+    normalized = os.path.normpath(resolved)
+    if normalized.startswith("/tmp/") or normalized == "/tmp":
+        return True
+    if not normalized.startswith(home + os.sep) and normalized != home:
+        return False
+    rel = os.path.relpath(normalized, home)
+    for sensitive in _SENSITIVE_PATHS:
+        if rel == sensitive or rel.startswith(sensitive + os.sep) or sensitive.startswith("/") and normalized.startswith(sensitive):
+            return False
+    return True
+
+
 def resolver_ruta(ruta: str = "", cwd: str = "~") -> str:
     if not ruta or not ruta.strip():
         return os.path.expanduser(cwd)
@@ -46,7 +68,11 @@ def resolver_ruta(ruta: str = "", cwd: str = "~") -> str:
             ruta = real + ruta[len(alias):]
             break
     base = os.path.expanduser(cwd)
-    return os.path.normpath(os.path.join(base, ruta))
+    resolved = os.path.normpath(os.path.join(base, ruta))
+    if not _es_ruta_segura(resolved):
+        log.warning(f"Ruta bloqueada por seguridad: {resolved}")
+        return os.path.expanduser(cwd)
+    return resolved
 
 def tamaño_legible(bytes_: int) -> str:
     if bytes_ < 1024:
@@ -183,8 +209,13 @@ def buscar_archivo(nombre: str, directorio: str = "~", profundidad: int = 3) -> 
 
 def ejecutar_cmd(cmd: str, timeout: int = 10) -> str:
     try:
+        parts = shlex.split(cmd)
+        safe_cmd = ' '.join(shlex.quote(p) for p in parts)
+    except ValueError:
+        safe_cmd = cmd
+    try:
         r = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=timeout
+            safe_cmd, shell=True, capture_output=True, text=True, timeout=timeout
         )
         out = (r.stdout + r.stderr).strip()
         if not out:

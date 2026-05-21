@@ -1,5 +1,6 @@
 import json
 import datetime
+import time
 
 from .logging_setup import log
 
@@ -12,6 +13,7 @@ class ConversationMemory:
         self.max_turns = max_turns
         self.turns: list[dict] = []           # contexto actual (ventana deslizante)
         self.full_log: list[dict] = []        # log completo persistente
+        self._last_save = 0.0                 # debounce
         self._load_log()
 
     def _load_log(self):
@@ -22,6 +24,10 @@ class ConversationMemory:
             self.full_log = []
 
     def _save_log(self):
+        now = time.monotonic()
+        if now - self._last_save < 1.5:
+            return
+        self._last_save = now
         try:
             with open(self.history_file, "w", encoding="utf-8") as f:
                 json.dump(self.full_log, f, ensure_ascii=False, indent=2)
