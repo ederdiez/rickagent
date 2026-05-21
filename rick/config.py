@@ -21,8 +21,8 @@ CFG = {
     "mic_device":    None,          # None = PipeWire por defecto
     "sample_rate":   16000,
     "channels":      1,
-    "silence_db":    0,           # umbral VAD en dBFS
-    "vad_hold_ms":   140,          # ms de silencio antes de cortar
+    "silence_db":    0,             # umbral base (se sube por calibración al arrancar realtime)
+    "vad_hold_ms":   100,           # ms de silencio antes de cortar (más bajo = más reactivo)
     "vad_prebuf_ms": 300,           # ms de pre-buffer (captura antes del habla)
     "max_record_s":  18,
     "min_speech_ms": 350,

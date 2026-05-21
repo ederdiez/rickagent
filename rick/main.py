@@ -190,8 +190,10 @@ class JARVIS:
                 self.tts.say("Error inesperado.")
 
     def run_realtime(self):
+        print("\n\033[0;36m🎤 Calibrando ruido ambiente (no hables 1s)...\033[0m")
+        self.vad.calibrate()
         self.tts.say("Modo conversación activado. Hablo cuando quieras.")
-        print("\n\033[0;36m🎤 Escuchando en tiempo real... (Ctrl+C para salir)\033[0m\n")
+        print("\033[0;36m🎤 Escuchando en tiempo real... (Ctrl+C para salir)\033[0m\n")
 
         silence_count = 0
         max_silence = 0.5

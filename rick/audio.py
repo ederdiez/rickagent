@@ -20,22 +20,60 @@ class VADRecorder:
     """
     Graba voz con detección de actividad (VAD) basada en energía con histéresis.
     Incluye pre-buffer para no perder el inicio del habla.
+    Chunks pequeños (30 ms) y `latency='low'` para cortar rápido al callar.
     """
+    CHUNK_MS = 30
+    THRESH_MIN = 22.0
+    THRESH_MAX = 50.0
+    NOISE_MARGIN_DB = 15.0
+
     def __init__(self, cfg: dict):
         self.sr       = cfg["sample_rate"]
         self.channels = cfg["channels"]
         self.device   = cfg["mic_device"]
-        self.thresh   = cfg["silence_db"]
+        self.thresh   = float(cfg["silence_db"])
         self.hold_ms  = cfg["vad_hold_ms"]
         self.prebuf_ms= cfg["vad_prebuf_ms"]
         self.max_s    = cfg["max_record_s"]
         self.min_ms   = cfg["min_speech_ms"]
+        self.chunk_n  = int(self.sr * self.CHUNK_MS / 1000)
+
+    def calibrate(self, duration_s: float = 0.7) -> None:
+        """Mide ruido ambiente y fija el umbral por encima de él."""
+        n_chunks = max(8, int(duration_s * 1000 / self.CHUNK_MS))
+        levels: list[float] = []
+        try:
+            with sd.InputStream(
+                device=self.device,
+                samplerate=self.sr,
+                channels=self.channels,
+                dtype="int16",
+                blocksize=self.chunk_n,
+                latency="low",
+            ) as stream:
+                # descarta primeros chunks (transitorio del arranque del stream)
+                for _ in range(3):
+                    stream.read(self.chunk_n)
+                for _ in range(n_chunks):
+                    chunk, _ = stream.read(self.chunk_n)
+                    levels.append(_rms_db(chunk))
+        except Exception as e:
+            log.warning(f"VAD: calibración fallida ({e}); umbral={self.thresh:.1f}")
+            return
+
+        if not levels:
+            return
+        noise = sum(levels) / len(levels)
+        new_thresh = noise + self.NOISE_MARGIN_DB
+        new_thresh = min(max(new_thresh, self.THRESH_MIN), self.THRESH_MAX)
+        self.thresh = max(self.thresh, new_thresh)
+        log.info(f"VAD calibrado: ruido≈{noise:.1f} dB → umbral={self.thresh:.1f} dB")
 
     def record(self) -> np.ndarray | None:
-        chunk_ms   = 80                                  # ms por chunk VAD
-        chunk_n    = int(self.sr * chunk_ms / 1000)
-        prebuf_n   = max(1, self.prebuf_ms // chunk_ms)  # chunks de pre-buffer
-        hold_n     = max(1, self.hold_ms // chunk_ms)
+        chunk_ms   = self.CHUNK_MS
+        chunk_n    = self.chunk_n
+        prebuf_n   = max(1, self.prebuf_ms // chunk_ms)
+        hold_n     = max(2, self.hold_ms // chunk_ms)
         max_chunks = int(self.max_s * 1000 / chunk_ms)
         min_chunks = max(1, self.min_ms // chunk_ms)
 
@@ -50,6 +88,8 @@ class VADRecorder:
                 samplerate=self.sr,
                 channels=self.channels,
                 dtype="int16",
+                blocksize=chunk_n,
+                latency="low",
             ) as stream:
                 for _ in range(max_chunks):
                     chunk, _ = stream.read(chunk_n)
@@ -77,6 +117,10 @@ class VADRecorder:
 
         if not speaking or len(speech) < min_chunks:
             return None
+
+        # recorta cola de silencio (deja un chunk como margen natural)
+        if silence_count > 1:
+            speech = speech[:-(silence_count - 1)]
 
         audio = np.concatenate(speech).flatten()
         return audio.astype(np.float32) / 32768.0
