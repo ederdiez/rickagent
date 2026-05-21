@@ -70,7 +70,7 @@ VOLUMEN_SUBIR    {"cantidad":10}
 VOLUMEN_BAJAR    {"cantidad":10}
 VOLUMEN_MUTE     {}
 
-# Teclado / ventanas (ydotool — Wayland)
+# Teclado / ventanas (wtype/xdotool)
 ESCRIBIR         {"texto":"..."}
 ATAJO            {"combo":"ctrl+c"}
 NUEVA_PESTANA    {}

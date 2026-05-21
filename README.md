@@ -49,16 +49,12 @@ nano .env
 
 **Linux (Arch):**
 ```bash
-sudo pacman -S ydotool grim espeak ffmpeg
-sudo systemctl enable --now ydotoold
-sudo usermod -aG input $USER  # Logout y relogin
+sudo pacman -S wtype xdotool grim espeak ffmpeg
 ```
 
 **Linux (Debian/Ubuntu):**
 ```bash
-sudo apt install ydotool grim espeak ffmpeg
-sudo systemctl enable --now ydotoold
-sudo usermod -aG input $USER
+sudo apt install wtype xdotool grim espeak ffmpeg
 ```
 
 ## 💬 Uso
@@ -220,9 +216,9 @@ sudo apt install espeak-ng  # Debian/Ubuntu
 
 **Wayland no funciona**
 ```bash
-# Verificar ydotoold
-sudo systemctl status ydotoold
-sudo systemctl restart ydotoold
+# Verificar wtype
+which wtype
+# Instalar: sudo pacman -S wtype  (Arch)  |  sudo apt install wtype (Debian)
 ```
 
 ## 📊 Comparativa de Modos

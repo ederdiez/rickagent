@@ -77,17 +77,29 @@ def run_cmd(cmd: list[str], timeout: float = 5.0, capture: bool = False) -> str 
 
 
 def hotkey(combo: str):
-    if _has("ydotool"):
-        run_cmd(["ydotool", "key", combo])
+    if _has("wtype"):
+        parts = combo.split("+")
+        if len(parts) > 1:
+            modifiers = parts[:-1]
+            key = parts[-1]
+            mods_down = " ".join(f"-M {m}" for m in modifiers)
+            mods_up = " ".join(f"-m {m}" for m in modifiers)
+            run_cmd(["wtype"] + mods_down.split() + [key] + mods_up.split())
+        else:
+            run_cmd(["wtype", "-k", combo])
+    elif _has("xdotool"):
+        run_cmd(["xdotool", "key", combo])
     else:
-        log.warning("ydotool no instalado — atajo no ejecutado")
+        log.warning("wtype/xdotool no instalados — atajo no ejecutado")
 
 
 def wayland_type(texto: str):
-    if _has("ydotool"):
-        run_cmd(["ydotool", "type", "--key-delay=25", texto])
+    if _has("wtype"):
+        run_cmd(["wtype", texto])
+    elif _has("xdotool"):
+        run_cmd(["xdotool", "type", texto])
     else:
-        log.warning("ydotool no instalado")
+        log.warning("wtype/xdotool no instalados — texto no escrito")
 
 
 def screenshot(ruta: str) -> bool:
