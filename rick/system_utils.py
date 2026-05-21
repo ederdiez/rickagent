@@ -11,6 +11,53 @@ from .logging_setup import log
 
 _has = lambda cmd: shutil.which(cmd) is not None
 
+_DIR_ALIASES = {
+    "escritorio": "Desktop",
+    "desktop": "Desktop",
+    "descargas": "Downloads",
+    "downloads": "Downloads",
+    "documentos": "Documents",
+    "documents": "Documents",
+    "música": "Music",
+    "musica": "Music",
+    "music": "Music",
+    "vídeos": "Videos",
+    "videos": "Videos",
+    "imágenes": "Pictures",
+    "imagenes": "Pictures",
+    "pictures": "Pictures",
+    "imagens": "Pictures",
+}
+
+def resolver_ruta(ruta: str = "", cwd: str = "~") -> str:
+    if not ruta or not ruta.strip():
+        return os.path.expanduser(cwd)
+    ruta = ruta.strip()
+    if ruta.startswith("/"):
+        return os.path.normpath(os.path.expanduser(ruta))
+    ruta_lower = ruta.lower()
+    if ruta_lower == "..":
+        padre = os.path.dirname(os.path.expanduser(cwd))
+        return padre if padre else os.path.expanduser(cwd)
+    if ruta_lower in _DIR_ALIASES:
+        ruta = _DIR_ALIASES[ruta_lower]
+    for alias, real in _DIR_ALIASES.items():
+        if ruta_lower.startswith(alias + "/") or ruta_lower.startswith(alias + os.sep):
+            ruta = real + ruta[len(alias):]
+            break
+    base = os.path.expanduser(cwd)
+    return os.path.normpath(os.path.join(base, ruta))
+
+def tamaño_legible(bytes_: int) -> str:
+    if bytes_ < 1024:
+        return f"{bytes_} B"
+    elif bytes_ < 1024 ** 2:
+        return f"{bytes_ / 1024:.1f} KB"
+    elif bytes_ < 1024 ** 3:
+        return f"{bytes_ / 1024 ** 2:.1f} MB"
+    else:
+        return f"{bytes_ / 1024 ** 3:.2f} GB"
+
 
 def run_cmd(cmd: list[str], timeout: float = 5.0, capture: bool = False) -> str | None:
     """Ejecuta un comando con timeout. Retorna stdout si capture=True."""

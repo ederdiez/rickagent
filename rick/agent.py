@@ -108,14 +108,34 @@ AGENT_TOOLS = [
         }
     },
     {
-        "name": "LISTAR_DIR",
-        "description": "Lista contenido de un directorio.",
+        "name": "IR",
+        "description": "Cambia el directorio de trabajo actual (CWD). Acepta rutas relativas, '..' para subir, o nombres en español como 'descargas', 'escritorio', 'documentos'.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "ruta": {"type": "string"}
+                "directorio": {"type": "string", "description": "Nombre o ruta del directorio destino"}
             },
-            "required": ["ruta"]
+            "required": ["directorio"]
+        }
+    },
+    {
+        "name": "INFO_DIR",
+        "description": "Muestra estadísticas de un directorio: total archivos/carpetas, tamaño total, tipos de archivo, top 5 más grandes.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ruta": {"type": "string", "description": "Ruta del directorio a analizar"}
+            }
+        }
+    },
+    {
+        "name": "LISTAR_DIR",
+        "description": "Lista contenido de un directorio con detalles: tipo (directorio/archivo), tamaño, fecha de modificación. Ordena carpetas primero.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "ruta": {"type": "string", "description": "Ruta del directorio a listar"}
+            }
         }
     },
     {

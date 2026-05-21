@@ -10,7 +10,7 @@ from .reminders import ReminderManager
 from .system_utils import (
     hotkey, wayland_type, screenshot, volumen, sistema_info, proceso_info,
     buscar_archivo, ejecutar_cmd, obtener_clima, traducir, clipboard_leer,
-    clipboard_escribir, run_cmd, _has
+    clipboard_escribir, run_cmd, _has, resolver_ruta, tamaño_legible
 )
 
 
@@ -19,7 +19,11 @@ class ActionExecutor:
         self.cfg       = cfg
         self.notes     = notes
         self.reminders = reminders
+        self.cwd       = os.path.expanduser("~")
         self._hablar   = None      # inyectado después
+
+    def _resolve(self, path: str = "") -> str:
+        return resolver_ruta(path, self.cwd)
 
     def set_hablar(self, fn):
         self._hablar = fn
@@ -74,6 +78,8 @@ class ActionExecutor:
             "COPIAR_ARCHIVO":    self._copiar_archivo,
             "BORRAR_ARCHIVO":    self._borrar_archivo,
             "CREAR_CARPETA":     self._crear_carpeta,
+            "IR":                self._ir,
+            "INFO_DIR":          self._info_dir,
             "LISTAR_DIR":        self._listar_dir,
             "RENOMBRAR":         self._renombrar,
             "BUSCAR_ARCHIVO":    self._buscar_archivo,
@@ -241,10 +247,10 @@ class ActionExecutor:
 
     def _crear_archivo(self, p):
         import shutil
-        ruta = os.path.expanduser(p.get("ruta", "~/nuevo.txt"))
+        ruta = self._resolve(p.get("ruta", "~/nuevo.txt"))
         contenido = p.get("contenido", "")
         try:
-            os.makedirs(os.path.dirname(os.path.abspath(ruta)), exist_ok=True)
+            os.makedirs(os.path.dirname(ruta), exist_ok=True)
             with open(ruta, "w", encoding="utf-8") as f:
                 f.write(contenido)
             msg = f"Archivo creado: {os.path.basename(ruta)}."
@@ -256,7 +262,7 @@ class ActionExecutor:
             return msg
 
     def _leer_archivo(self, p):
-        ruta = os.path.expanduser(p.get("ruta", ""))
+        ruta = self._resolve(p.get("ruta", ""))
         try:
             with open(ruta, encoding="utf-8") as f:
                 contenido = f.read()
@@ -274,10 +280,10 @@ class ActionExecutor:
 
     def _mover_archivo(self, p):
         import shutil
-        origen  = os.path.expanduser(p.get("origen", ""))
-        destino = os.path.expanduser(p.get("destino", ""))
+        origen  = self._resolve(p.get("origen", ""))
+        destino = self._resolve(p.get("destino", ""))
         try:
-            os.makedirs(os.path.dirname(os.path.abspath(destino)) or ".", exist_ok=True)
+            os.makedirs(os.path.dirname(destino) or ".", exist_ok=True)
             shutil.move(origen, destino)
             msg = f"Movido a {os.path.basename(destino)}."
             self.hablar(msg)
@@ -289,10 +295,10 @@ class ActionExecutor:
 
     def _copiar_archivo(self, p):
         import shutil
-        origen  = os.path.expanduser(p.get("origen", ""))
-        destino = os.path.expanduser(p.get("destino", ""))
+        origen  = self._resolve(p.get("origen", ""))
+        destino = self._resolve(p.get("destino", ""))
         try:
-            os.makedirs(os.path.dirname(os.path.abspath(destino)) or ".", exist_ok=True)
+            os.makedirs(os.path.dirname(destino) or ".", exist_ok=True)
             shutil.copy2(origen, destino)
             msg = f"Copiado a {os.path.basename(destino)}."
             self.hablar(msg)
@@ -304,7 +310,7 @@ class ActionExecutor:
 
     def _borrar_archivo(self, p):
         import shutil
-        ruta = os.path.expanduser(p.get("ruta", ""))
+        ruta = self._resolve(p.get("ruta", ""))
         try:
             if os.path.isdir(ruta):
                 shutil.rmtree(ruta)
@@ -323,7 +329,7 @@ class ActionExecutor:
             return msg
 
     def _crear_carpeta(self, p):
-        ruta = os.path.expanduser(p.get("ruta", ""))
+        ruta = self._resolve(p.get("ruta", ""))
         try:
             os.makedirs(ruta, exist_ok=True)
             msg = f"Carpeta creada: {os.path.basename(ruta)}."
@@ -335,26 +341,106 @@ class ActionExecutor:
             return msg
 
     def _listar_dir(self, p):
-        ruta = os.path.expanduser(p.get("ruta", "~"))
+        ruta = self._resolve(p.get("ruta", "."))
         try:
-            items = sorted(os.listdir(ruta))
+            items = sorted(os.listdir(ruta), key=lambda x: (not os.path.isdir(os.path.join(ruta, x)), x.lower()))
             if not items:
                 msg = "La carpeta está vacía."
                 self.hablar(msg)
                 return msg
-            nombres = ", ".join(items[:10])
-            sufijo = f" y {len(items)-10} más" if len(items) > 10 else ""
-            msg = f"Contiene {len(items)} elementos: {nombres}{sufijo}."
+
+            lines = []
+            for name in items:
+                full = os.path.join(ruta, name)
+                is_dir = os.path.isdir(full)
+                try:
+                    stat = os.stat(full)
+                    size = tamaño_legible(stat.st_size) if not is_dir else ""
+                    mtime = datetime.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
+                except:
+                    size = ""
+                    mtime = ""
+                tag = "📁" if is_dir else " "
+                lines.append(f"{tag} {name}/" if is_dir else f" {name}  {size:>8}  {mtime}")
+
+            output = "\n".join(lines)
+
+            dirs_n = sum(1 for n in items if os.path.isdir(os.path.join(ruta, n)))
+            files_n = len(items) - dirs_n
+            voice = f"{dirs_n} carpetas, {files_n} archivos."
+            self.hablar(voice)
+            return output
+        except PermissionError:
+            msg = f"Sin permiso para listar {ruta}."
             self.hablar(msg)
-            return "\n".join(items)
+            return msg
         except Exception as e:
             msg = f"No pude listar: {e}"
             self.hablar(msg)
             return msg
 
+    def _ir(self, p):
+        destino = self._resolve(p.get("directorio", "."))
+        if not os.path.isdir(destino):
+            if os.path.isfile(destino):
+                destino = os.path.dirname(destino)
+            else:
+                self.hablar(f"No encontré el directorio {p.get('directorio', '')}.")
+                return f"Directorio no existe: {destino}"
+        self.cwd = destino
+        basename = os.path.basename(destino)
+        self.hablar(f"En {basename}.")
+        return f"CWD → {destino}"
+
+    def _info_dir(self, p):
+        ruta = self._resolve(p.get("ruta", "."))
+        if not os.path.isdir(ruta):
+            self.hablar("Eso no es un directorio.")
+            return "No es un directorio."
+        try:
+            total_size = 0
+            file_count = 0
+            dir_count = 0
+            largest = []
+            by_ext = {}
+            for root, dirs, files in os.walk(ruta):
+                dir_count += len(dirs)
+                for f in files:
+                    fp = os.path.join(root, f)
+                    try:
+                        s = os.stat(fp)
+                        total_size += s.st_size
+                        file_count += 1
+                        ext = os.path.splitext(f)[1].lower() or "(sin ext)"
+                        by_ext[ext] = by_ext.get(ext, 0) + 1
+                        largest.append((s.st_size, fp))
+                    except:
+                        pass
+            largest.sort(reverse=True, key=lambda x: x[0])
+            top5 = "\n".join(f"  {tamaño_legible(s)}  {p}" for s, p in largest[:5])
+            exts = sorted(by_ext.items(), key=lambda x: -x[1])[:8]
+            ext_str = ", ".join(f"{ext}: {n}" for ext, n in exts)
+            voice = f"{file_count} archivos, {dir_count} carpetas, {tamaño_legible(total_size)} en total."
+            self.hablar(voice)
+            return (
+                f"📊 Info: {ruta}\n"
+                f"  Archivos: {file_count}  Carpetas: {dir_count}\n"
+                f"  Tamaño total: {tamaño_legible(total_size)}\n"
+                f"  Tipos: {ext_str}\n"
+                f"  Top 5 más grandes:\n{top5}"
+            )
+        except PermissionError:
+            msg = f"Sin permiso para analizar {ruta}."
+            self.hablar(msg)
+            return msg
+        except Exception as e:
+            msg = f"Error analizando directorio: {e}"
+            self.hablar(msg)
+            return msg
+
     def _renombrar(self, p):
-        origen  = os.path.expanduser(p.get("origen", ""))
-        destino = os.path.expanduser(p.get("destino", ""))
+        origen  = self._resolve(p.get("origen", ""))
+        destino = self._resolve(p.get("destino", ""))
         try:
             os.rename(origen, destino)
             msg = f"Renombrado a {os.path.basename(destino)}."
@@ -368,7 +454,7 @@ class ActionExecutor:
     def _buscar_archivo(self, p):
         result = buscar_archivo(
             p.get("nombre", "*"),
-            p.get("directorio", "~"),
+            self._resolve(p.get("directorio", ".")),
             p.get("profundidad", 3),
         )
         self.hablar(result)
@@ -450,7 +536,7 @@ class ActionExecutor:
 
     def _leer_dir_recursivo(self, p) -> str:
         """Lista árbol de directorio con profundidad controlada."""
-        ruta = os.path.expanduser(p.get("ruta", "."))
+        ruta = self._resolve(p.get("ruta", "."))
         profundidad = p.get("profundidad", 3)
         if not os.path.isdir(ruta):
             return f"El directorio no existe: {ruta}"
@@ -474,7 +560,7 @@ class ActionExecutor:
     def _buscar_en_archivos(self, p) -> str:
         """Grep en archivos dentro de un directorio."""
         patron = p.get("patron", "")
-        directorio = os.path.expanduser(p.get("directorio", "."))
+        directorio = self._resolve(p.get("directorio", "."))
         extension = p.get("extension", "")
         if not patron.strip():
             return "Error: patrón vacío."
@@ -489,7 +575,7 @@ class ActionExecutor:
     def _git_cmd(self, p) -> str:
         """Ejecuta un comando git básico."""
         subcmd = p.get("subcmd", "status")
-        directorio = os.path.expanduser(p.get("directorio", "."))
+        directorio = self._resolve(p.get("directorio", "."))
         safe_cmds = {"status", "log", "diff", "add", "commit", "push", "pull",
                      "clone", "init", "branch", "checkout", "show", "remote"}
         try:
