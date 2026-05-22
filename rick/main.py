@@ -84,11 +84,26 @@ class JARVIS:
         if "callate" in texto_lower or "cállate" in texto_lower:
             self.silent_mode = True
             log.info("Modo silencio activado")
+            prompt_silencio = (
+                "El usuario te ha ordenado callarte. "
+                "Vas a entrar en modo silencio y no responderás hasta que te vuelvan a llamar con 'hola rick'. "
+                "Despídete con una frase corta, creativa y divertida, acorde a tu personalidad. "
+                "Responde en el JSON habitual."
+            )
+            resp = consultar_llm(prompt_silencio, self.cfg)
+            self.tts.say(resp.get("respuesta_voz", "Me callo."))
             return
 
         if "hola rick" in texto_lower and self.silent_mode:
             self.silent_mode = False
             log.info("Modo silencio desactivado")
+            prompt_reactivar = (
+                "El usuario te ha reactivado después de un periodo de silencio. "
+                "Responde con una frase corta, creativa y divertida de bienvenida, como si despertaras de una siesta. "
+                "Responde en el JSON habitual."
+            )
+            resp = consultar_llm(prompt_reactivar, self.cfg)
+            self.tts.say(resp.get("respuesta_voz", "Hola de nuevo."))
             return
 
         # Si está en modo silencio, no procesar nada
