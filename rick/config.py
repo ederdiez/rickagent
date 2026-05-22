@@ -92,7 +92,8 @@ CREAR_CARPETA    {"ruta":"nueva_carpeta"}
 LISTAR_DIR       {"ruta":"."}
 RENOMBRAR        {"origen":"viejo.txt","destino":"nuevo.txt"}
 BUSCAR_ARCHIVO   {"nombre":"*.py","directorio":".","profundidad":3}
-IR               {"directorio":"descargas"}
+IR               {"directorio":"Escritorio"}    <- navegar (.. para subir, - para volver)
+PWD              {}                               <- dice en qué directorio estoy
 INFO_DIR         {"ruta":"."}
 
 # Notas (bloc de notas en memoria persistente)
@@ -113,17 +114,18 @@ CONVERSAR        {}
 ERROR            {}
 
 ─── NOTAS IMPORTANTES ──────────────────────────────────────────────
-- NAVEGACIÓN: tienes un CWD (Current Working Directory). Usa IR para moverte.
-  - Rutas relativas se resuelven contra el CWD.
-  - Nombres en español: "descargas", "escritorio", "documentos", "música", etc.
-  - ".." para subir al padre.
-  - Si el usuario dice "ve a descargas" usa IR. Si dice "qué hay aquí" usa LISTAR_DIR con ruta ".".
+- NAVEGACIÓN: tienes un CWD (directorio actual).
+   - IR {"directorio":"Escritorio"} para moverte.
+   - IR {"directorio":".."} para subir.
+   - IR {"directorio":"-"} para volver al directorio anterior.
+   - PWD {} para saber dónde estás.
+   - LISTAR_DIR {"ruta":"."} para ver el contenido.
 - respuesta_voz: 1-2 frases, natural, con tu personalidad.
 - pensamiento: qué estás haciendo y por qué (no se muestra al usuario).
 - ⚠️ EL USUARIO HABLA POR VOZ: es probable que haya errores de transcripción.
-  - "steam" → "es team", "zoom" → "zum", "firefox" → "fire fos"
-  - Si reconoces una palabra que suena parecida a una app conocida, ASUME que es esa app.
-  - Ejemplo: "abre es team" → probablemente "abre steam".
+   - "steam" → "es team", "zoom" → "zum", "firefox" → "fire fos"
+   - Si reconoces una palabra que suena parecida a una app conocida, ASUME que es esa app.
+   - Ejemplo: "abre es team" → probablemente "abre steam".
 - EL USUARIO QUE DEBES USAR AL GUARDAS CIERTOS ARCHIVOS ES: eder
 - SI TE DIGO QUE PONGAS MUSICA ABRE UNA VENTANA WEB CON ESTE LINK: https://www.youtube.com/watch?v=CFGLoQIhmow&list=RDCFGLoQIhmow&start_radio=1
 """
@@ -144,10 +146,12 @@ PROCESO DE TRABAJO:
 
 REGLAS IMPORTANTES:
 - Nunca asumas que un comando funcionó. SIEMPRE lee su output.
-- NAVEGACIÓN: usa IR para moverte entre directorios. Rutas relativas resuelven contra el CWD.
-  - ".." para subir, "descargas" para ir a ~/Downloads, etc.
-  - Usa LISTAR_DIR(".") para ver el contenido del directorio actual.
-  - Usa INFO_DIR(".") para estadísticas del directorio.
+- NAVEGACIÓN por directorios:
+   - IR {"directorio":"nombre"} para moverte
+   - IR {"directorio":".."} para subir
+   - IR {"directorio":"-"} para volver atrás
+   - PWD {} para saber dónde estás
+   - LISTAR_DIR {"ruta":"."} para ver contenido
 - Para código Python, prefiere EJECUTAR_PYTHON sobre EJECUTAR_CMD cuando sea posible.
 - Si hay dudas sobre si algo es destructivo (borrar, git force-push), pregunta al usuario.
 - Respuesta final: 2-4 frases en español, directas, sin markdown.

@@ -1,9 +1,11 @@
 import datetime
+import json
 import time
 import os
 import shlex
 import webbrowser
 import urllib.parse
+from difflib import get_close_matches
 
 from .logging_setup import log
 from .memory import NotesManager
@@ -15,19 +17,53 @@ from .system_utils import (
 )
 
 
+BOOKMARKS_FILE = os.path.expanduser("~/.rick/bookmarks.json")
+
+
 class ActionExecutor:
     def __init__(self, cfg: dict, notes: NotesManager, reminders: ReminderManager):
-        self.cfg       = cfg
-        self.notes     = notes
-        self.reminders = reminders
-        self.cwd       = os.path.expanduser("~")
-        self._hablar   = None      # inyectado después
+        self.cfg        = cfg
+        self.notes      = notes
+        self.reminders  = reminders
+        self.cwd        = os.path.expanduser("~")
+        self._dir_stack = []
+        self._bookmarks = self._load_bookmarks()
+        self._hablar    = None      # inyectado después
 
     def _resolve(self, path: str = "") -> str:
         return resolver_ruta(path, self.cwd)
 
     def set_hablar(self, fn):
         self._hablar = fn
+
+    def _load_bookmarks(self) -> dict:
+        try:
+            with open(BOOKMARKS_FILE) as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+    def _save_bookmarks(self):
+        os.makedirs(os.path.dirname(BOOKMARKS_FILE), exist_ok=True)
+        with open(BOOKMARKS_FILE, "w") as f:
+            json.dump(self._bookmarks, f, indent=2)
+
+    def _cwd_pretty(self) -> str:
+        home = os.path.expanduser("~")
+        cwd = self.cwd
+        if cwd == home:
+            return "~"
+        if cwd.startswith(home + os.sep):
+            return "~" + cwd[len(home):]
+        return cwd
+
+    @property
+    def cwd(self) -> str:
+        return self._cwd
+
+    @cwd.setter
+    def cwd(self, val: str):
+        self._cwd = val
 
     def validate_tools(self, agent_tools: list[dict]):
         handler_names = {
@@ -37,7 +73,7 @@ class ActionExecutor:
             "ESCRIBIR", "ATAJO", "NUEVA_PESTANA", "CERRAR_VENTANA",
             "MINIMIZAR", "MAXIMIZAR", "CLIPBOARD_LEER", "CLIPBOARD_ESCRIBIR",
             "CREAR_ARCHIVO", "LEER_ARCHIVO", "MOVER_ARCHIVO", "COPIAR_ARCHIVO",
-            "BORRAR_ARCHIVO", "CREAR_CARPETA", "IR", "INFO_DIR", "LISTAR_DIR",
+            "BORRAR_ARCHIVO", "CREAR_CARPETA", "IR", "PWD", "INFO_DIR", "LISTAR_DIR",
             "RENOMBRAR", "BUSCAR_ARCHIVO", "NOTA_GUARDAR", "NOTA_LEER",
             "NOTA_BORRAR", "RECORDATORIO", "CLIMA", "TRADUCIR",
             "EJECUTAR_PYTHON", "ESCRIBIR_Y_EJECUTAR", "LEER_DIR_RECURSIVO",
@@ -99,6 +135,7 @@ class ActionExecutor:
             "BORRAR_ARCHIVO":    self._borrar_archivo,
             "CREAR_CARPETA":     self._crear_carpeta,
             "IR":                self._ir,
+            "PWD":               self._pwd,
             "INFO_DIR":          self._info_dir,
             "LISTAR_DIR":        self._listar_dir,
             "RENOMBRAR":         self._renombrar,
@@ -377,19 +414,64 @@ class ActionExecutor:
                 self.hablar(msg)
                 return msg
 
-            lines = []
+            # Colores ANSI
+            C_DIR  = "\033[0;34m"
+            C_EXE  = "\033[0;32m"
+            C_LNK  = "\033[0;36m"
+            C_HID  = "\033[2m"
+            C_RST  = "\033[0m"
+            C_DIM  = "\033[2m"
+            C_BOLD = "\033[1m"
+
+            home = os.path.expanduser("~")
+            header_path = ruta.replace(home, "~")
+            lines = [f"{C_BOLD}📂 {header_path}{C_RST}\n"]
+
             for name in items:
                 full = os.path.join(ruta, name)
-                is_dir = os.path.isdir(full)
+                is_hidden = name.startswith(".")
+
                 try:
                     stat = os.stat(full)
-                    size = tamaño_legible(stat.st_size) if not is_dir else ""
+                    size = tamaño_legible(stat.st_size)
                     mtime = datetime.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
                 except:
-                    size = ""
+                    size = "?"
                     mtime = ""
-                tag = "📁" if is_dir else " "
-                lines.append(f"{tag} {name}/" if is_dir else f" {name}  {size:>8}  {mtime}")
+
+                is_dir  = os.path.isdir(full)
+                is_lnk  = os.path.islink(full)
+                is_exe  = os.access(full, os.X_OK) and not is_dir
+
+                # Color selection
+                if is_dir:
+                    color = C_DIR
+                    icon  = "📁"
+                    display = f"{name}/"
+                elif is_lnk:
+                    color = C_LNK
+                    icon  = "🔗"
+                    display = name
+                elif is_exe:
+                    color = C_EXE
+                    icon  = "⚡"
+                    display = name
+                else:
+                    color = C_RST
+                    icon  = " "
+                    display = name
+
+                if is_hidden:
+                    color += C_HID
+
+                # Symlink target
+                link_target = f" → {os.readlink(full)}" if is_lnk else ""
+
+                size_str = f"{size:>8}" if not is_dir else "       " + C_DIM + "DIR" + C_RST
+                lines.append(
+                    f"{color}{icon} {display}{link_target}{C_RST}"
+                    f"  {C_DIM}{size_str}  {mtime}{C_RST}"
+                )
 
             output = "\n".join(lines)
 
@@ -407,18 +489,109 @@ class ActionExecutor:
             self.hablar(msg)
             return msg
 
+    def _pwd(self, p):
+        pretty = self._cwd_pretty()
+        self.hablar(f"Estoy en {pretty}.")
+        return f"PWD: {self.cwd}"
+
     def _ir(self, p):
-        destino = self._resolve(p.get("directorio", "."))
+        raw = (p.get("directorio") or ".").strip()
+
+        # --- Bookmark management ---
+        if raw.startswith("--save") or raw.startswith("-s"):
+            name = raw.split(None, 1)[-1].strip() if len(raw.split(None, 1)) > 1 else ""
+            if not name:
+                self.hablar("Dime un nombre para el marcador.")
+                return "No name for bookmark"
+            self._bookmarks[name] = self.cwd
+            self._save_bookmarks()
+            self.hablar(f"Guardé {self._cwd_pretty()} como '{name}'.")
+            return f"Bookmark '{name}' → {self.cwd}"
+
+        if raw.startswith("--delete") or raw.startswith("-d"):
+            name = raw.split(None, 1)[-1].strip() if len(raw.split(None, 1)) > 1 else ""
+            if name in self._bookmarks:
+                del self._bookmarks[name]
+                self._save_bookmarks()
+                self.hablar(f"Marcador '{name}' eliminado.")
+            else:
+                self.hablar(f"No existe el marcador '{name}'.")
+            return None
+
+        if raw in ("--list", "-l"):
+            if not self._bookmarks:
+                self.hablar("No tienes marcadores guardados.")
+            else:
+                lines = [f"  {k} → {v}" for k, v in self._bookmarks.items()]
+                self.hablar(f"{len(self._bookmarks)} marcadores.")
+                return "Marcadores:\n" + "\n".join(lines)
+            return "Sin marcadores."
+
+        # --- Stack navigation ---
+        if raw in ("--back", "-", "..-"):
+            if not self._dir_stack:
+                self.hablar("No hay directorios anteriores.")
+                return "Stack vacío"
+            prev = self._dir_stack.pop()
+            if not os.path.isdir(prev):
+                self.hablar("El directorio anterior ya no existe.")
+                return f"Ya no existe: {prev}"
+            self.cwd = prev
+            pretty = self._cwd_pretty()
+            self.hablar(f"De vuelta en {pretty}.")
+            return f"CWD → {prev}"
+
+        if raw in ("--stack",):
+            if not self._dir_stack:
+                self.hablar("El historial está vacío.")
+            else:
+                lines = [f"  {i}: {d}" for i, d in enumerate(self._dir_stack, 1)]
+                self.hablar(f"{len(self._dir_stack)} directorios en el historial.")
+                return "Historial:\n" + "\n".join(lines)
+            return "Stack vacío"
+
+        # --- Resolve path ---
+        # Check bookmark first (before path resolution)
+        if raw in self._bookmarks:
+            destino = self._bookmarks[raw]
+        else:
+            destino = self._resolve(raw)
+
+        # Fuzzy match if destination doesn't exist
+        if not os.path.exists(destino):
+            parent = os.path.dirname(destino)
+            basename = os.path.basename(destino)
+            if os.path.isdir(parent):
+                try:
+                    candidates = [d for d in os.listdir(parent)
+                                  if os.path.isdir(os.path.join(parent, d))]
+                    matches = get_close_matches(basename, candidates, n=1, cutoff=0.5)
+                    if matches:
+                        destino = os.path.join(parent, matches[0])
+                except PermissionError:
+                    pass
+
+            # When all else fails, try bookmark fuzzy match
+            if not os.path.isdir(destino):
+                bm_matches = get_close_matches(raw, list(self._bookmarks.keys()), n=1, cutoff=0.5)
+                if bm_matches:
+                    destino = self._bookmarks[bm_matches[0]]
+
+        # If still doesn't exist
         if not os.path.isdir(destino):
             if os.path.isfile(destino):
                 destino = os.path.dirname(destino)
             else:
-                self.hablar(f"No encontré el directorio {p.get('directorio', '')}.")
+                self.hablar(f"No encontré el directorio {raw}.")
                 return f"Directorio no existe: {destino}"
+
+        # Save current to stack and switch
+        if self.cwd != destino:
+            self._dir_stack.append(self.cwd)
         self.cwd = destino
-        basename = os.path.basename(destino)
-        self.hablar(f"En {basename}.")
-        return f"CWD → {destino}"
+        pretty = self._cwd_pretty()
+        self.hablar(f"En {pretty}.")
+        return f"CWD → {self.cwd}"
 
     def _info_dir(self, p):
         ruta = self._resolve(p.get("ruta", "."))
@@ -426,6 +599,8 @@ class ActionExecutor:
             self.hablar("Eso no es un directorio.")
             return "No es un directorio."
         try:
+            home = os.path.expanduser("~")
+            header_path = ruta.replace(home, "~")
             total_size = 0
             file_count = 0
             dir_count = 0
@@ -451,7 +626,7 @@ class ActionExecutor:
             voice = f"{file_count} archivos, {dir_count} carpetas, {tamaño_legible(total_size)} en total."
             self.hablar(voice)
             return (
-                f"📊 Info: {ruta}\n"
+                f"\033[1m📊 {header_path}\033[0m\n"
                 f"  Archivos: {file_count}  Carpetas: {dir_count}\n"
                 f"  Tamaño total: {tamaño_legible(total_size)}\n"
                 f"  Tipos: {ext_str}\n"
@@ -563,24 +738,52 @@ class ActionExecutor:
             return f"Error escribiendo/ejecutando script: {e}"
 
     def _leer_dir_recursivo(self, p) -> str:
-        """Lista árbol de directorio con profundidad controlada."""
+        """Lista árbol de directorio con profundidad controlada y caracteres Unicode."""
         ruta = self._resolve(p.get("ruta", "."))
         profundidad = p.get("profundidad", 3)
         if not os.path.isdir(ruta):
             return f"El directorio no existe: {ruta}"
         try:
             resultado = []
+            home = os.path.expanduser("~")
+            header = ruta.replace(home, "~")
+            resultado.append(f"📂 {header}/")
+
             for root, dirs, files in os.walk(ruta):
                 depth = root.replace(ruta, "").count(os.sep)
                 if depth >= profundidad:
                     dirs.clear()
                     continue
-                indent = "  " * depth
-                resultado.append(f"{indent}{os.path.basename(root)}/")
-                for f in sorted(files)[:20]:
-                    resultado.append(f"{indent}  {f}")
-                if len(files) > 20:
-                    resultado.append(f"{indent}  ... y {len(files) - 20} más")
+
+                if depth == 0:
+                    continue  # skip root, already printed
+
+                # ─ Tree prefix ─
+                rel = root[len(ruta) + 1:]
+                parts = rel.split(os.sep)
+                prefix = ""
+                for i in range(len(parts) - 1):
+                    prefix += "│   "
+                prefix += "├── "
+
+                resultado.append(f"{prefix}{os.path.basename(root)}/")
+
+                files_sorted = sorted(files)
+                n_files = len(files_sorted)
+                for i, f in enumerate(files_sorted[:20]):
+                    try:
+                        fp = os.path.join(root, f)
+                        sz = tamaño_legible(os.stat(fp).st_size)
+                    except:
+                        sz = "?"
+                    is_last = (i == n_files - 1) or (i == 19 and n_files > 20)
+                    file_prefix = prefix.replace("├── ", "│   ") + ("└── " if is_last else "├── ")
+                    resultado.append(f"{file_prefix}{f}  ({sz})")
+
+                if n_files > 20:
+                    more_prefix = prefix.replace("├── ", "│   ") + "└── "
+                    resultado.append(f"{more_prefix}... y {n_files - 20} archivos más")
+
             return "\n".join(resultado[:300]) or "Directorio vacío."
         except Exception as e:
             return f"Error listando directorio: {e}"

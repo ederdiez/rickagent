@@ -37,6 +37,10 @@ class JARVIS:
         self.whisper_model = None
         self.silent_mode = False
 
+    @property
+    def cwd(self) -> str:
+        return self.executor.cwd
+
     def _load_whisper(self):
         device = "cuda" if self._has_cuda() else "cpu"
         self.whisper_model = load_whisper(self.cfg["whisper_model"], device)
@@ -118,6 +122,7 @@ class JARVIS:
             log.info("[main] Modo agente activado para tarea compleja")
             respuesta = run_agent_task(texto, self.cfg, self.memory, self.executor, self.tts)
             self.tts.say(respuesta)
+            self._print_cwd()
             return
 
         # Flujo legacy (modo reactivo simple)
@@ -136,19 +141,21 @@ class JARVIS:
         self.tts.say(voz)
         self.executor.run(accion, params)
         self.memory.add_assistant(resp)
+        self._print_cwd()
 
     def run_push(self):
         self.tts.say("RICK listo. Enter para hablar, Enter para parar.")
-        print("\n\033[0;36m  Enter = grabar/parar  |  Ctrl+C = salir\033[0m\n")
+        print()
 
         while True:
             try:
-                input("\033[2m>> Enter para EMPEZAR...\033[0m")
+                cwd_display = self._cwd_color()
+                input(f"\033[2m{cwd_display} >> Enter para EMPEZAR...\033[0m")
             except KeyboardInterrupt:
                 self.tts.say("Hasta pronto.")
                 sys.exit(0)
 
-            print("\033[0;31m🔴 Grabando... (Enter para PARAR)\033[0m")
+            print(f"\033[0;31m🔴 {self._cwd_color()}Grabando... (Enter para PARAR)\033[0m")
 
             parar  = threading.Event()
             buf    = []
@@ -204,24 +211,35 @@ class JARVIS:
                 log.error(f"Error: {e}")
                 self.tts.say("Error inesperado.")
 
+    def _cwd_color(self) -> str:
+        return f"\033[0;36m[{self.cwd.replace(os.path.expanduser('~'), '~')}]\033[0m "
+
+    def _print_cwd(self):
+        print(f"\r{self._cwd_color()}", end="", flush=True)
+
     def run_realtime(self):
         print("\n\033[0;36m🎤 Calibrando ruido ambiente (no hables 1s)...\033[0m")
         self.vad.calibrate()
         self.tts.say("Modo conversación activado. Hablo cuando quieras.")
-        print("\033[0;36m🎤 Escuchando en tiempo real... (Ctrl+C para salir)\033[0m\n")
+        print(f"\033[0;36m🎤 Escuchando en tiempo real...\033[0m {self._cwd_color()}\n")
 
         silence_ticks = 0
+        cwd_ticks = 0
 
         while True:
             audio = self.vad.record()
             if audio is None:
                 silence_ticks += 1
-                if silence_ticks % 10 == 0:
+                cwd_ticks += 1
+                if cwd_ticks % 30 == 0:
+                    self._print_cwd()
+                elif cwd_ticks % 10 == 0:
                     print(".", end="", flush=True)
                 continue
 
             silence_ticks = 0
-            print("\n🔴 Procesando...", end="", flush=True)
+            cwd_ticks = 0
+            print(f"\n🔴 {self._cwd_color()}Procesando...", end="", flush=True)
 
             texto = transcribir(self.whisper_model, audio, self.cfg["language"])
             if not texto:

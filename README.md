@@ -112,7 +112,10 @@ RICK ejecuta acciones JSON respondidas por el LLM:
 | **Web** | `ABRIR_URL`, `BUSCAR_WEB` |
 | **Audio** | `VOLUMEN_SUBIR`, `VOLUMEN_BAJAR`, `VOLUMEN_MUTE` |
 | **Teclado** | `ESCRIBIR`, `ATAJO`, `NUEVA_PESTANA`, `CERRAR_VENTANA` |
-| **Archivos** | `CREAR_ARCHIVO`, `LEER_ARCHIVO`, `BORRAR_ARCHIVO`, `MOVER_ARCHIVO`, `LISTAR_DIR` |
+| **Archivos** | `CREAR_ARCHIVO`, `LEER_ARCHIVO`, `BORRAR_ARCHIVO`, `MOVER_ARCHIVO`, `COPIAR_ARCHIVO`, `CREAR_CARPETA`, `RENOMBRAR`, `BUSCAR_ARCHIVO` |
+| **Navegación** | `IR`, `PWD`, `LISTAR_DIR`, `INFO_DIR`, `LEER_DIR_RECURSIVO` |
+| **Marcadores** | `IR --save nombre`, `IR --list`, `IR --delete nombre`, `IR nombre` (atajo) |
+| **Pila** | `IR --back` / `IR -` (vuelve al dir anterior), `IR --stack` (historial) |
 | **Clipboard** | `CLIPBOARD_LEER`, `CLIPBOARD_ESCRIBIR` |
 | **Notas** | `NOTA_GUARDAR`, `NOTA_LEER`, `NOTA_BORRAR` |
 | **Recordatorios** | `RECORDATORIO` (timer en background) |
@@ -155,6 +158,9 @@ rick/
 jarvis.py                    # Punto de entrada ejecutable
 requirements.txt             # Dependencias Python
 .env.example                 # Template para API keys
+
+~/.rick/bookmarks.json       # Marcadores de directorios (se crea automáticamente)
+~/.rick/rick.log             # Log en modo daemon
 ```
 
 ## 🔧 Configuración Avanzada

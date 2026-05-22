@@ -121,13 +121,21 @@ AGENT_TOOLS = [
     },
     {
         "name": "IR",
-        "description": "Cambia el directorio de trabajo actual (CWD). Acepta rutas relativas, '..' para subir, o nombres en español como 'descargas', 'escritorio', 'documentos'.",
+        "description": "Cambia el directorio de trabajo. Usa \"..\" para subir, \"-\" para volver atrás, o nombres como \"Escritorio\", \"Descargas\".",
         "input_schema": {
             "type": "object",
             "properties": {
-                "directorio": {"type": "string", "description": "Nombre o ruta del directorio destino"}
+                "directorio": {"type": "string", "description": "Directorio destino: ruta, .., -, o nombre español"}
             },
             "required": ["directorio"]
+        }
+    },
+    {
+        "name": "PWD",
+        "description": "Muestra el directorio de trabajo actual (CWD).",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
         }
     },
     {
