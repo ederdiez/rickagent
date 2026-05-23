@@ -83,6 +83,7 @@ class ActionExecutor:
             "NOTA_BORRAR", "RECORDATORIO", "CLIMA", "TRADUCIR",
             "EJECUTAR_PYTHON", "ESCRIBIR_Y_EJECUTAR", "LEER_DIR_RECURSIVO",
             "BUSCAR_EN_ARCHIVOS", "GIT_CMD", "CONVERSAR", "ERROR", "MUSICA",
+            "BOOKMARK_GUARDAR", "BOOKMARK_BORRAR", "BOOKMARK_LISTAR",
         }
         for tool in agent_tools:
             if tool["name"] not in handler_names:
@@ -153,6 +154,9 @@ class ActionExecutor:
             "CONVERSAR":         lambda p: None,
             "ERROR":             lambda p: None,
             "MUSICA":            self._musica,
+            "BOOKMARK_GUARDAR":  self._bookmark_guardar,
+            "BOOKMARK_BORRAR":   self._bookmark_borrar,
+            "BOOKMARK_LISTAR":   self._bookmark_listar,
         }
         fn = handlers.get(a)
         if fn:
@@ -408,31 +412,39 @@ class ActionExecutor:
         self.hablar(f"Estoy en {pretty}.")
         return f"PWD: {self._cwd}"
 
+    def _find_dir_in(self, parent: str, name: str) -> str | None:
+        try:
+            candidates = [d for d in os.listdir(parent)
+                         if os.path.isdir(os.path.join(parent, d))]
+        except PermissionError:
+            return None
+        if not candidates:
+            return None
+
+        for c in candidates:
+            if c == name:
+                return os.path.join(parent, c)
+
+        name_lower = name.lower()
+        for c in candidates:
+            if c.lower() == name_lower:
+                return os.path.join(parent, c)
+
+        matches = get_close_matches(name, candidates, n=1, cutoff=0.5)
+        if matches:
+            return os.path.join(parent, matches[0])
+
+        return None
+
+    def _cd(self, destino: str) -> str:
+        if self._cwd != destino:
+            self._dir_stack.append(self._cwd)
+        self._cwd = destino
+        self.hablar(f"En {self._cwd_pretty()}.")
+        return f"CWD → {self._cwd}"
+
     def _ir(self, p):
         raw = (p.get("directorio") or ".").strip()
-
-        if raw.startswith("--save") or raw.startswith("-s"):
-            name = raw.split(None, 1)[-1].strip() if len(raw.split(None, 1)) > 1 else ""
-            if not name:
-                return self._say("Dime un nombre para el marcador.")
-            self._bookmarks[name] = self._cwd
-            self._save_bookmarks()
-            return self._say(f"Guardé {self._cwd_pretty()} como '{name}'.")
-
-        if raw.startswith("--delete") or raw.startswith("-d"):
-            name = raw.split(None, 1)[-1].strip() if len(raw.split(None, 1)) > 1 else ""
-            if name in self._bookmarks:
-                del self._bookmarks[name]
-                self._save_bookmarks()
-                return self._say(f"Marcador '{name}' eliminado.")
-            return self._say(f"No existe el marcador '{name}'.")
-
-        if raw in ("--list", "-l"):
-            if not self._bookmarks:
-                return self._say("No tienes marcadores guardados.")
-            lines = [f"  {k} → {v}" for k, v in self._bookmarks.items()]
-            self.hablar(f"{len(self._bookmarks)} marcadores.")
-            return "Marcadores:\n" + "\n".join(lines)
 
         if raw in ("--back", "-", "..-"):
             if not self._dir_stack:
@@ -443,45 +455,57 @@ class ActionExecutor:
             self._cwd = prev
             return self._say(f"De vuelta en {self._cwd_pretty()}.")
 
-        if raw == "--stack":
-            if not self._dir_stack:
-                return self._say("El historial está vacío.")
-            lines = [f"  {i}: {d}" for i, d in enumerate(self._dir_stack, 1)]
-            self.hablar(f"{len(self._dir_stack)} directorios en el historial.")
-            return "Historial:\n" + "\n".join(lines)
-
         if raw in self._bookmarks:
             destino = self._bookmarks[raw]
-        else:
-            destino = self._resolve(raw)
+            return self._cd(destino)
 
-        if not os.path.exists(destino):
-            parent = os.path.dirname(destino)
-            basename = os.path.basename(destino)
-            if os.path.isdir(parent):
-                try:
-                    candidates = [d for d in os.listdir(parent) if os.path.isdir(os.path.join(parent, d))]
-                    matches = get_close_matches(basename, candidates, n=1, cutoff=0.5)
-                    if matches:
-                        destino = os.path.join(parent, matches[0])
-                except PermissionError:
-                    pass
-            if not os.path.isdir(destino):
-                bm_matches = get_close_matches(raw, list(self._bookmarks.keys()), n=1, cutoff=0.5)
-                if bm_matches:
-                    destino = self._bookmarks[bm_matches[0]]
+        destino = self._resolve(raw)
+        if os.path.isdir(destino):
+            return self._cd(destino)
 
-        if not os.path.isdir(destino):
-            if os.path.isfile(destino):
-                destino = os.path.dirname(destino)
-            else:
-                return self._say(f"No encontré el directorio {raw}.")
+        parent = os.path.dirname(destino)
+        if parent and os.path.isdir(parent):
+            match = self._find_dir_in(parent, os.path.basename(destino))
+            if match:
+                return self._cd(match)
 
-        if self._cwd != destino:
-            self._dir_stack.append(self._cwd)
-        self._cwd = destino
-        self.hablar(f"En {self._cwd_pretty()}.")
-        return f"CWD → {self._cwd}"
+        match = self._find_dir_in(self._cwd, raw)
+        if match:
+            return self._cd(match)
+
+        home = os.path.expanduser("~")
+        if self._cwd != home:
+            match = self._find_dir_in(home, raw)
+            if match:
+                return self._cd(match)
+
+        if os.path.isfile(destino):
+            return self._cd(os.path.dirname(destino))
+
+        return self._say(f"No encontré el directorio {raw}.")
+
+    def _bookmark_guardar(self, p):
+        name = p.get("nombre", "").strip()
+        if not name:
+            return self._say("Dime un nombre para el marcador.")
+        self._bookmarks[name] = self._cwd
+        self._save_bookmarks()
+        return self._say(f"Guardé {self._cwd_pretty()} como '{name}'.")
+
+    def _bookmark_borrar(self, p):
+        name = p.get("nombre", "").strip()
+        if name in self._bookmarks:
+            del self._bookmarks[name]
+            self._save_bookmarks()
+            return self._say(f"Marcador '{name}' eliminado.")
+        return self._say(f"No existe el marcador '{name}'.")
+
+    def _bookmark_listar(self, p):
+        if not self._bookmarks:
+            return self._say("No tienes marcadores guardados.")
+        lines = [f"  {k} → {v}" for k, v in self._bookmarks.items()]
+        self.hablar(f"{len(self._bookmarks)} marcadores.")
+        return "Marcadores:\n" + "\n".join(lines)
 
     def _info_dir(self, p):
         ruta = self._resolve(p.get("ruta", "."))

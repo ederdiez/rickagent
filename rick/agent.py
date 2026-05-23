@@ -112,6 +112,16 @@ AGENT_TOOLS = [
         "url": {"type": "string"}
     }, "required": ["url"]}},
     {"name": "SCREENSHOT", "input_schema": {"type": "object", "properties": {}}},
+    {"name": "BOOKMARK_GUARDAR", "description": "Guarda el directorio actual como marcador con un nombre.",
+     "input_schema": {"type": "object", "properties": {
+         "nombre": {"type": "string"}
+     }, "required": ["nombre"]}},
+    {"name": "BOOKMARK_BORRAR", "description": "Elimina un marcador por nombre.",
+     "input_schema": {"type": "object", "properties": {
+         "nombre": {"type": "string"}
+     }, "required": ["nombre"]}},
+    {"name": "BOOKMARK_LISTAR", "description": "Lista todos los marcadores guardados.",
+     "input_schema": {"type": "object", "properties": {}}},
 ]
 
 
@@ -123,6 +133,9 @@ def _is_complex_task(texto: str) -> bool:
         "instala", "configura", "modifica el archivo", "proyecto",
         "función", "clase", "módulo", "test", "tests", "generador",
         "calcula", "procesa", "transforma", "convierte",
+        "navega", "ve a", "busca carpeta", "explora",
+        "encuentra el directorio", "abre la carpeta", "entra en",
+        "métete en", "busca el archivo", "encuentra el archivo",
     }
     texto_lower = texto.lower()
     return any(kw in texto_lower for kw in complex_keywords)

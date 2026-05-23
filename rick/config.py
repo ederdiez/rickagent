@@ -52,7 +52,9 @@ ACCIONES DISPONIBLES:
 #   MOVER_ARCHIVO{"origen":"...","destino":"..."} | COPIAR_ARCHIVO{"origen":"...","destino":"..."}
 #   BORRAR_ARCHIVO{"ruta":"..."} | CREAR_CARPETA{"ruta":"..."} | LISTAR_DIR{"ruta":"."}
 #   RENOMBRAR{"origen":"...","destino":"..."} | BUSCAR_ARCHIVO{"nombre":"*.py","directorio":".","profundidad":3}
-#   IR{"directorio":"nombre"} (.. para subir, - para volver) | PWD{} | INFO_DIR{"ruta":"."}
+#   IR{"directorio":"nombre"} (.. para subir, - para volver, busca automáticamente si no encuentra)
+#   PWD{} | INFO_DIR{"ruta":"."}
+# Marcadores: BOOKMARK_GUARDAR{"nombre":"x"} | BOOKMARK_BORRAR{"nombre":"x"} | BOOKMARK_LISTAR{}
 # Notas: NOTA_GUARDAR{"titulo":"...","contenido":"..."} | NOTA_LEER{"titulo":"..."} | NOTA_BORRAR{"titulo":"..."}
 # Recordatorio: RECORDATORIO{"mensaje":"...","segundos":60}
 # Internet: CLIMA{"ciudad":"Bilbao"} | TRADUCIR{"texto":"...","idioma_destino":"es"} | MUSICA{"url":"..."}
