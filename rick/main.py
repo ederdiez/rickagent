@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import sys
 import os
 import signal
@@ -25,21 +23,17 @@ from .agent import run_agent_task, _is_complex_task, AGENT_TOOLS
 
 class JARVIS:
     def __init__(self, cfg: dict, args):
-        self.cfg      = cfg
-        self.args     = args
-        self.tts      = TTS(cfg)
-        self.vad      = VADRecorder(cfg)
-        self.memory   = ConversationMemory(cfg["history_file"], cfg["max_ctx_turns"])
-        self.notes    = NotesManager(cfg["notes_file"])
-        self.reminders= ReminderManager(self.tts.say)
-        self.executor = ActionExecutor(cfg, self.notes, self.reminders)
+        self.cfg       = cfg
+        self.args      = args
+        self.tts       = TTS(cfg)
+        self.vad       = VADRecorder(cfg)
+        self.memory    = ConversationMemory(cfg["history_file"], cfg["max_ctx_turns"])
+        self.notes     = NotesManager(cfg["notes_file"])
+        self.reminders = ReminderManager(self.tts.say)
+        self.executor  = ActionExecutor(cfg, self.notes, self.reminders)
         self.executor.set_hablar(self.tts.say)
         self.whisper_model = None
         self.silent_mode = False
-
-    @property
-    def cwd(self) -> str:
-        return self.executor.cwd
 
     def _load_whisper(self):
         device = "cuda" if self._has_cuda() else "cpu"
@@ -54,7 +48,7 @@ class JARVIS:
         try:
             import torch
             return torch.cuda.is_available()
-        except:
+        except Exception:
             return False
 
     def _check_ollama(self):
@@ -80,44 +74,48 @@ class JARVIS:
             log.error(f"Error micrófono: {e}. Prueba: python -m rick.main --list-mics")
             sys.exit(1)
 
+    def _signal_handler(self, sig, frame):
+        print()
+        log.info("Saliendo...")
+        self.reminders.cancel_all()
+        self.tts.say("Hasta pronto, amo.")
+        sys.exit(0)
+
     def process_command(self, texto: str):
         log.info(f"Tú: {texto}")
-
-        # Detectar comandos de silencio
         texto_lower = texto.lower().strip()
+
         if "callate" in texto_lower or "cállate" in texto_lower:
             self.silent_mode = True
             log.info("Modo silencio activado")
-            prompt_silencio = (
+            resp = consultar_llm(
                 "El usuario te ha ordenado callarte. "
                 "Vas a entrar en modo silencio y no responderás hasta que te vuelvan a llamar con 'hola rick'. "
                 "Despídete con una frase corta, creativa y divertida, acorde a tu personalidad. "
-                "Responde en el JSON habitual."
+                "Responde en el JSON habitual.",
+                self.cfg,
             )
-            resp = consultar_llm(prompt_silencio, self.cfg)
             self.tts.say(resp.get("respuesta_voz", "Me callo."))
             return
 
         if "hola rick" in texto_lower and self.silent_mode:
             self.silent_mode = False
             log.info("Modo silencio desactivado")
-            prompt_reactivar = (
+            resp = consultar_llm(
                 "El usuario te ha reactivado después de un periodo de silencio. "
                 "Responde con una frase corta, creativa y divertida de bienvenida, como si despertaras de una siesta. "
-                "Responde en el JSON habitual."
+                "Responde en el JSON habitual.",
+                self.cfg,
             )
-            resp = consultar_llm(prompt_reactivar, self.cfg)
             self.tts.say(resp.get("respuesta_voz", "Hola de nuevo."))
             return
 
-        # Si está en modo silencio, no procesar nada
         if self.silent_mode:
             log.debug("En modo silencio, ignorando: " + texto)
             return
 
         self.memory.add_user(texto)
 
-        # Modo dual: detectar si es tarea compleja para activar agente
         if self.cfg.get("agent_enabled", True) and _is_complex_task(texto):
             log.info("[main] Modo agente activado para tarea compleja")
             respuesta = run_agent_task(texto, self.cfg, self.memory, self.executor, self.tts)
@@ -125,10 +123,8 @@ class JARVIS:
             self._print_cwd()
             return
 
-        # Flujo legacy (modo reactivo simple)
         log.info("[main] Modo reactivo")
         prompt = self.memory.build_prompt(texto)
-
         resp   = consultar_llm(prompt, self.cfg)
         accion = resp.get("accion", "CONVERSAR")
         params = resp.get("parametros", {})
@@ -212,7 +208,7 @@ class JARVIS:
                 self.tts.say("Error inesperado.")
 
     def _cwd_color(self) -> str:
-        return f"\033[0;36m[{self.cwd.replace(os.path.expanduser('~'), '~')}]\033[0m "
+        return f"\033[0;36m[{self.executor.cwd.replace(os.path.expanduser('~'), '~')}]\033[0m "
 
     def _print_cwd(self):
         print(f"\r{self._cwd_color()}", end="", flush=True)
@@ -263,15 +259,8 @@ class JARVIS:
             self._check_ollama()
         self._check_mic()
 
-        def _signal_handler(sig, frame):
-            print()
-            log.info("Saliendo...")
-            self.reminders.cancel_all()
-            self.tts.say("Hasta pronto, amo.")
-            sys.exit(0)
-
-        signal.signal(signal.SIGINT, _signal_handler)
-        signal.signal(signal.SIGTERM, _signal_handler)
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
 
         if self.args.realtime:
             self.run_realtime()
@@ -301,12 +290,11 @@ def parse_args():
 
 
 def main():
-    # Cargar variables de .env si existe
     try:
         from dotenv import load_dotenv
         load_dotenv()
     except ImportError:
-        pass  # sin python-dotenv, funciona con vars de entorno del sistema
+        pass
 
     args = parse_args()
     setup_logging(logging.DEBUG if args.debug else logging.INFO)
@@ -334,14 +322,12 @@ def main():
         print()
         sys.exit(0)
 
-    # Aplicar overrides de args
     if args.model:    CFG["whisper_model"] = args.model
     if args.llm:      CFG["model"]         = args.llm
     if args.provider: CFG["provider"]      = args.provider
     if args.lang:     CFG["language"]      = args.lang
     if args.no_voice: CFG["no_voice"]      = True
 
-    # Modo daemon
     if args.daemon:
         log.info("Iniciando en modo daemon...")
         pid = os.fork() if hasattr(os, "fork") else -1
@@ -350,7 +336,6 @@ def main():
             sys.exit(0)
         os.setsid()
 
-    # Arrancar
     jarvis = JARVIS(CFG, args)
     jarvis.start()
 

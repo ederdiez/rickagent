@@ -28,6 +28,7 @@ _DIR_ALIASES = {
     "imagenes": "Pictures",
     "pictures": "Pictures",
     "imagens": "Pictures",
+    "imagen": "Pictures",
     "descarga": "Downloads",
     "documento": "Documents",
     "descargar": "Downloads",

@@ -9,26 +9,21 @@ from .config import SYSTEM_PROMPT
 
 
 def _strip_thinking(raw: str) -> str:
-    """Elimina bloques <think>...</think> que generan algunos modelos."""
     raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL)
     return raw.strip()
 
 
 def _extract_json(text: str) -> str:
-    """Extrae el primer objeto JSON válido del texto."""
     text = _strip_thinking(text)
-    # Quitar bloques markdown ```json ... ```
     for bloque in re.split(r"```(?:json)?", text):
         bloque = bloque.strip().rstrip("`").strip()
         if bloque.startswith("{"):
             return bloque
-    # Buscar con regex
     m = re.search(r"\{.*\}", text, re.DOTALL)
     return m.group(0) if m else text
 
 
 def _parse_response(raw: str) -> dict:
-    """Convierte una respuesta de modelo en el dict estándar."""
     try:
         limpio = _extract_json(raw)
         result = json.loads(limpio)
@@ -47,17 +42,22 @@ def _parse_response(raw: str) -> dict:
         }
 
 
-def _ollama(prompt: str, cfg: dict) -> dict:
-    """Consulta Ollama (modelos locales)."""
+def _error(msg: str) -> dict:
+    return {"accion": "ERROR", "parametros": {}, "respuesta_voz": msg}
+
+
+def _ollama(prompt: str, cfg: dict, system_prompt: str | None = None, raw: bool = False,
+            model: str | None = None, max_tokens: int | None = None) -> dict | str:
+    sp = system_prompt or SYSTEM_PROMPT
     payload = {
-        "model":   cfg["model"],
-        "prompt":  prompt,
-        "system":  SYSTEM_PROMPT,
-        "stream":  False,
+        "model": model or cfg["model"],
+        "prompt": prompt,
+        "system": sp,
+        "stream": False,
         "options": {
-            "temperature":  0.75,
-            "num_predict":  600,
-            "top_p":        0.9,
+            "temperature": 0.75,
+            "num_predict": max_tokens or 600,
+            "top_p": 0.9,
             "repeat_penalty": 1.05,
         },
     }
@@ -71,10 +71,9 @@ def _ollama(prompt: str, cfg: dict) -> dict:
                 timeout=cfg.get("ollama_timeout", 120),
             )
             r.raise_for_status()
-            raw = r.json()["response"].strip()
-            log.debug(f"Ollama raw: {repr(raw[:200])}")
-            return _parse_response(raw)
-
+            raw_text = r.json()["response"].strip()
+            log.debug(f"Ollama raw: {repr(raw_text[:200])}")
+            return raw_text if raw else _parse_response(raw_text)
         except requests.ConnectionError as e:
             last_error = e
             log.warning(f"Ollama sin conexión (intento {attempt+1})")
@@ -83,162 +82,111 @@ def _ollama(prompt: str, cfg: dict) -> dict:
             last_error = e
             log.error(f"Ollama error: {e}")
             break
-
-    return {
-        "accion": "ERROR",
-        "parametros": {},
-        "respuesta_voz": f"Error de conexión con Ollama: {last_error}",
-    }
+    return _error(f"Error de conexión con Ollama: {last_error}") if not raw else ""
 
 
-def _gemini(prompt: str, cfg: dict) -> dict:
-    """Consulta Gemini (Google)."""
+def _gemini(prompt: str, cfg: dict, system_prompt: str | None = None, raw: bool = False,
+            model: str | None = None, max_tokens: int | None = None) -> dict | str:
     try:
         import google.generativeai as genai
     except ImportError:
-        return {
-            "accion": "ERROR",
-            "parametros": {},
-            "respuesta_voz": "SDK de Gemini no instalada. Ejecuta: pip install google-generativeai",
-        }
+        return _error("SDK de Gemini no instalada. Ejecuta: pip install google-generativeai")
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
-        return {
-            "accion": "ERROR",
-            "parametros": {},
-            "respuesta_voz": "GEMINI_API_KEY no configurada en .env o variables de entorno",
-        }
+        return _error("GEMINI_API_KEY no configurada en .env o variables de entorno")
 
+    sp = system_prompt or SYSTEM_PROMPT
     try:
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(
-            model_name=cfg["model"],
-            system_instruction=SYSTEM_PROMPT,
+        model_i = genai.GenerativeModel(
+            model_name=model or cfg["model"],
+            system_instruction=sp,
         )
-        response = model.generate_content(prompt)
-        raw = response.text.strip()
-        log.debug(f"Gemini raw: {repr(raw[:200])}")
-        return _parse_response(raw)
-
+        gen_config = {}
+        if max_tokens:
+            gen_config["max_output_tokens"] = max_tokens
+        response = model_i.generate_content(prompt, generation_config=gen_config)
+        raw_text = response.text.strip()
+        log.debug(f"Gemini raw: {repr(raw_text[:200])}")
+        return raw_text if raw else _parse_response(raw_text)
     except Exception as e:
         log.error(f"Gemini error: {e}")
-        return {
-            "accion": "ERROR",
-            "parametros": {},
-            "respuesta_voz": f"Error con Gemini: {str(e)[:100]}",
-        }
+        return _error(f"Error con Gemini: {str(e)[:100]}")
 
 
-def _deepseek(prompt: str, cfg: dict) -> dict:
-    """Consulta DeepSeek (compatible con OpenAI API)."""
+def _deepseek(prompt: str, cfg: dict, system_prompt: str | None = None, raw: bool = False,
+              model: str | None = None, max_tokens: int | None = None) -> dict | str:
     try:
         from openai import OpenAI
     except ImportError:
-        return {
-            "accion": "ERROR",
-            "parametros": {},
-            "respuesta_voz": "SDK de OpenAI no instalada. Ejecuta: pip install openai",
-        }
+        return _error("SDK de OpenAI no instalada. Ejecuta: pip install openai")
 
     api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
-        return {
-            "accion": "ERROR",
-            "parametros": {},
-            "respuesta_voz": "DEEPSEEK_API_KEY no configurada en .env o variables de entorno",
-        }
+        return _error("DEEPSEEK_API_KEY no configurada en .env o variables de entorno")
 
+    sp = system_prompt or SYSTEM_PROMPT
     try:
-        client = OpenAI(
-            api_key=api_key,
-            base_url="https://api.deepseek.com",
-        )
+        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
         response = client.chat.completions.create(
-            model=cfg["model"],
+            model=model or cfg["model"],
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": sp},
                 {"role": "user", "content": prompt},
             ],
             temperature=0.75,
-            max_tokens=600,
+            max_tokens=max_tokens or 600,
         )
-        raw = response.choices[0].message.content.strip()
-        log.debug(f"DeepSeek raw: {repr(raw[:200])}")
-        return _parse_response(raw)
-
+        raw_text = response.choices[0].message.content.strip()
+        log.debug(f"DeepSeek raw: {repr(raw_text[:200])}")
+        return raw_text if raw else _parse_response(raw_text)
     except Exception as e:
         log.error(f"DeepSeek error: {e}")
-        return {
-            "accion": "ERROR",
-            "parametros": {},
-            "respuesta_voz": f"Error con DeepSeek: {str(e)[:100]}",
-        }
+        return _error(f"Error con DeepSeek: {str(e)[:100]}")
 
 
-def _anthropic(prompt: str, cfg: dict) -> dict:
-    """Consulta Anthropic (Claude)."""
+def _anthropic(prompt: str, cfg: dict, system_prompt: str | None = None, raw: bool = False,
+               model: str | None = None, max_tokens: int | None = None) -> dict | str:
     try:
         from anthropic import Anthropic
     except ImportError:
-        return {
-            "accion": "ERROR",
-            "parametros": {},
-            "respuesta_voz": "SDK de Anthropic no instalada. Ejecuta: pip install anthropic",
-        }
+        return _error("SDK de Anthropic no instalada. Ejecuta: pip install anthropic")
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        return {
-            "accion": "ERROR",
-            "parametros": {},
-            "respuesta_voz": "ANTHROPIC_API_KEY no configurada en .env o variables de entorno",
-        }
+        return _error("ANTHROPIC_API_KEY no configurada en .env o variables de entorno")
 
+    sp = system_prompt or SYSTEM_PROMPT
     try:
         client = Anthropic(api_key=api_key)
         response = client.messages.create(
-            model=cfg["model"],
-            max_tokens=cfg.get("max_tokens_reactive", 1024),
-            system=SYSTEM_PROMPT,
-            messages=[
-                {"role": "user", "content": prompt},
-            ],
+            model=model or cfg["model"],
+            max_tokens=max_tokens or cfg.get("max_tokens_reactive", 6144),
+            system=sp,
+            messages=[{"role": "user", "content": prompt}],
         )
-        raw = response.content[0].text.strip()
-        log.debug(f"Anthropic raw: {repr(raw[:200])}")
-        return _parse_response(raw)
-
+        raw_text = response.content[0].text.strip()
+        log.debug(f"Anthropic raw: {repr(raw_text[:200])}")
+        return raw_text if raw else _parse_response(raw_text)
     except Exception as e:
         log.error(f"Anthropic error: {e}")
-        return {
-            "accion": "ERROR",
-            "parametros": {},
-            "respuesta_voz": f"Error con Anthropic: {str(e)[:100]}",
-        }
+        return _error(f"Error con Anthropic: {str(e)[:100]}")
 
 
-def consultar_llm(prompt: str, cfg: dict) -> dict:
-    """Consulta el LLM usando el proveedor configurado."""
+def consultar_llm(prompt: str, cfg: dict, system_prompt: str | None = None,
+                  raw: bool = False, model: str | None = None,
+                  max_tokens: int | None = None) -> dict | str:
     provider = cfg.get("provider", "ollama").lower()
+    kw = {"system_prompt": system_prompt, "raw": raw, "model": model, "max_tokens": max_tokens}
 
     if provider == "ollama":
-        return _ollama(prompt, cfg)
+        return _ollama(prompt, cfg, **kw)
     elif provider == "gemini":
-        return _gemini(prompt, cfg)
+        return _gemini(prompt, cfg, **kw)
     elif provider == "deepseek":
-        return _deepseek(prompt, cfg)
+        return _deepseek(prompt, cfg, **kw)
     elif provider == "anthropic":
-        return _anthropic(prompt, cfg)
+        return _anthropic(prompt, cfg, **kw)
     else:
-        return {
-            "accion": "ERROR",
-            "parametros": {},
-            "respuesta_voz": f"Proveedor desconocido: {provider}",
-        }
-
-
-# Mantener para compatibilidad hacia atrás
-def consultar_ollama(prompt: str, cfg: dict, retries: int = 2) -> dict:
-    """Deprecated: usa consultar_llm() en su lugar."""
-    return _ollama(prompt, cfg)
+        return _error(f"Proveedor desconocido: {provider}")

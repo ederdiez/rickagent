@@ -3,6 +3,9 @@ import json
 import time
 import os
 import shlex
+import shutil
+import subprocess
+import tempfile
 import webbrowser
 import urllib.parse
 from difflib import get_close_matches
@@ -16,7 +19,6 @@ from .system_utils import (
     clipboard_escribir, run_cmd, _has, resolver_ruta, tamaño_legible
 )
 
-
 BOOKMARKS_FILE = os.path.expanduser("~/.rick/bookmarks.json")
 
 
@@ -25,16 +27,20 @@ class ActionExecutor:
         self.cfg        = cfg
         self.notes      = notes
         self.reminders  = reminders
-        self.cwd        = os.path.expanduser("~")
+        self._cwd       = os.path.expanduser("~")
         self._dir_stack = []
         self._bookmarks = self._load_bookmarks()
-        self._hablar    = None      # inyectado después
+        self._hablar    = None
 
     def _resolve(self, path: str = "") -> str:
-        return resolver_ruta(path, self.cwd)
+        return resolver_ruta(path, self._cwd)
 
     def set_hablar(self, fn):
         self._hablar = fn
+
+    def _say(self, msg: str) -> str:
+        self.hablar(msg)
+        return msg
 
     def _load_bookmarks(self) -> dict:
         try:
@@ -50,12 +56,11 @@ class ActionExecutor:
 
     def _cwd_pretty(self) -> str:
         home = os.path.expanduser("~")
-        cwd = self.cwd
-        if cwd == home:
+        if self._cwd == home:
             return "~"
-        if cwd.startswith(home + os.sep):
-            return "~" + cwd[len(home):]
-        return cwd
+        if self._cwd.startswith(home + os.sep):
+            return "~" + self._cwd[len(home):]
+        return self._cwd
 
     @property
     def cwd(self) -> str:
@@ -80,16 +85,14 @@ class ActionExecutor:
             "BUSCAR_EN_ARCHIVOS", "GIT_CMD", "CONVERSAR", "ERROR", "MUSICA",
         }
         for tool in agent_tools:
-            name = tool["name"]
-            if name not in handler_names:
-                log.warning(f"Herramienta '{name}' en AGENT_TOOLS no tiene handler en executor")
+            if tool["name"] not in handler_names:
+                log.warning(f"Herramienta '{tool['name']}' en AGENT_TOOLS no tiene handler en executor")
 
     def hablar(self, text: str):
         if self._hablar:
             self._hablar(text)
 
     def run_silent(self, tool_name: str, params: dict) -> str:
-        """Ejecuta una herramienta sin hablar. Para uso del agentic loop."""
         prev_hablar = self._hablar
         self._hablar = None
         try:
@@ -101,10 +104,6 @@ class ActionExecutor:
             self._hablar = prev_hablar
 
     def run(self, accion: str, params: dict) -> str | None:
-        """
-        Ejecuta la acción y retorna una cadena de resultado opcional
-        (usada en algunos flujos para inyectar info de vuelta al TTS).
-        """
         a = accion.upper()
         p = params or {}
         handlers = {
@@ -159,17 +158,12 @@ class ActionExecutor:
         if fn:
             return fn(p)
         log.warning(f"Acción desconocida: {a}")
-        return None
 
     def _abrir_app(self, p):
-        import subprocess
-        from difflib import get_close_matches
         app = p.get("app", "").strip().lower()
-
         if not app:
             self.hablar("¿Qué aplicación quieres abrir?")
             return None
-
         try:
             subprocess.Popen([app], stderr=subprocess.DEVNULL)
             return None
@@ -177,65 +171,52 @@ class ActionExecutor:
             try:
                 subprocess.Popen(["xdg-open", app], stderr=subprocess.DEVNULL)
                 return None
-            except:
+            except Exception:
                 pass
-
-        # Si falló, buscar apps similares en PATH
         try:
-            import os
             path_dirs = os.environ.get("PATH", "").split(":")
             available_apps = set()
             for path_dir in path_dirs:
                 try:
                     for exe in os.listdir(path_dir):
                         available_apps.add(exe.lower())
-                except:
+                except Exception:
                     pass
-
             matches = get_close_matches(app, available_apps, n=1, cutoff=0.6)
             if matches:
-                matched_app = matches[0]
-                self.hablar(f"Abriendo {matched_app}...")
-                subprocess.Popen([matched_app], stderr=subprocess.DEVNULL)
+                self.hablar(f"Abriendo {matches[0]}...")
+                subprocess.Popen([matches[0]], stderr=subprocess.DEVNULL)
                 return None
-        except:
+        except Exception:
             pass
-
         self.hablar(f"No encontré la aplicación {app}.")
-        return None
 
     def _abrir_url(self, p):
         webbrowser.open(p.get("url", "https://google.com"))
-        return None
 
     def _buscar_web(self, p):
         q = urllib.parse.quote_plus(p.get("query", ""))
         webbrowser.open(f"https://www.google.com/search?q={q}")
-        return None
 
     _MUSIC_URL = "https://www.youtube.com/watch?v=CFGLoQIhmow&list=RDCFGLoQIhmow&start_radio=1"
 
     def _musica(self, p):
         webbrowser.open(self._MUSIC_URL)
         self.hablar("Abriendo música, amo.")
-        return None
 
     def _screenshot(self, p):
         ts   = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         ruta = os.path.expanduser(f"~/screenshot_{ts}.png")
         ok   = screenshot(ruta)
         self.hablar(f"Captura guardada en {ruta}" if ok else "Instala grim o scrot para capturas.")
-        return None
 
     def _sistema_info(self, p):
         info = sistema_info()
-        self.hablar(info)
-        return info
+        return self._say(info)
 
     def _proceso_info(self, p):
         info = proceso_info(p.get("nombre", ""))
-        self.hablar(info)
-        return info
+        return self._say(info)
 
     def _ejecutar_cmd(self, p):
         out = ejecutar_cmd(p.get("cmd", "echo vacío"), p.get("timeout", 10))
@@ -248,57 +229,46 @@ class ActionExecutor:
         self.hablar(f"Apagando en {d} segundos.")
         time.sleep(d)
         run_cmd(["sudo", "shutdown", "-h", "now"])
-        return None
 
     def _reiniciar(self, p):
         d = p.get("delay", 5)
         self.hablar(f"Reiniciando en {d} segundos.")
         time.sleep(d)
         run_cmd(["sudo", "reboot"])
-        return None
 
     def _vol_subir(self, p):
         volumen("subir", p.get("cantidad", 10))
-        return None
 
     def _vol_bajar(self, p):
         volumen("bajar", p.get("cantidad", 10))
-        return None
 
     def _vol_mute(self, p):
         volumen("mute")
-        return None
 
     def _escribir(self, p):
         time.sleep(0.4)
         wayland_type(p.get("texto", ""))
-        return None
 
     def _atajo(self, p):
         hotkey(p.get("combo", ""))
-        return None
 
     def _nueva_pestana(self, p):
         hotkey("ctrl+t")
-        return None
 
     def _cerrar_ventana(self, p):
         hotkey("alt+F4")
-        return None
 
     def _minimizar(self, p):
         if _has("hyprctl"):
             run_cmd(["hyprctl", "dispatch", "movetoworkspacesilent", "special"])
         else:
             hotkey("super+h")
-        return None
 
     def _maximizar(self, p):
         if _has("hyprctl"):
             run_cmd(["hyprctl", "dispatch", "fullscreen", "1"])
         else:
             hotkey("super+Up")
-        return None
 
     def _clipboard_leer(self, p):
         contenido = clipboard_leer()
@@ -308,23 +278,16 @@ class ActionExecutor:
     def _clipboard_escribir(self, p):
         result = clipboard_escribir(p.get("texto", ""))
         self.hablar(result)
-        return None
 
     def _crear_archivo(self, p):
-        import shutil
         ruta = self._resolve(p.get("ruta", "~/nuevo.txt"))
-        contenido = p.get("contenido", "")
         try:
             os.makedirs(os.path.dirname(ruta), exist_ok=True)
             with open(ruta, "w", encoding="utf-8") as f:
-                f.write(contenido)
-            msg = f"Archivo creado: {os.path.basename(ruta)}."
-            self.hablar(msg)
-            return msg
+                f.write(p.get("contenido", ""))
+            return self._say(f"Archivo creado: {os.path.basename(ruta)}.")
         except Exception as e:
-            msg = f"No pude crear el archivo: {e}"
-            self.hablar(msg)
-            return msg
+            return self._say(f"No pude crear el archivo: {e}")
 
     def _leer_archivo(self, p):
         ruta = self._resolve(p.get("ruta", ""))
@@ -335,86 +298,58 @@ class ActionExecutor:
             self.hablar(resumen)
             return contenido
         except FileNotFoundError:
-            msg = "No encontré ese archivo."
-            self.hablar(msg)
-            return msg
+            return self._say("No encontré ese archivo.")
         except Exception as e:
-            msg = f"Error al leer: {e}"
-            self.hablar(msg)
-            return msg
+            return self._say(f"Error al leer: {e}")
 
     def _mover_archivo(self, p):
-        import shutil
         origen  = self._resolve(p.get("origen", ""))
         destino = self._resolve(p.get("destino", ""))
         try:
             os.makedirs(os.path.dirname(destino) or ".", exist_ok=True)
             shutil.move(origen, destino)
-            msg = f"Movido a {os.path.basename(destino)}."
-            self.hablar(msg)
-            return msg
+            return self._say(f"Movido a {os.path.basename(destino)}.")
         except Exception as e:
-            msg = f"No pude mover: {e}"
-            self.hablar(msg)
-            return msg
+            return self._say(f"No pude mover: {e}")
 
     def _copiar_archivo(self, p):
-        import shutil
         origen  = self._resolve(p.get("origen", ""))
         destino = self._resolve(p.get("destino", ""))
         try:
             os.makedirs(os.path.dirname(destino) or ".", exist_ok=True)
             shutil.copy2(origen, destino)
-            msg = f"Copiado a {os.path.basename(destino)}."
-            self.hablar(msg)
-            return msg
+            return self._say(f"Copiado a {os.path.basename(destino)}.")
         except Exception as e:
-            msg = f"No pude copiar: {e}"
-            self.hablar(msg)
-            return msg
+            return self._say(f"No pude copiar: {e}")
 
     def _borrar_archivo(self, p):
-        import shutil
         ruta = self._resolve(p.get("ruta", ""))
         try:
             if os.path.isdir(ruta):
                 shutil.rmtree(ruta)
             else:
                 os.remove(ruta)
-            msg = f"Eliminado {os.path.basename(ruta)}."
-            self.hablar(msg)
-            return msg
+            return self._say(f"Eliminado {os.path.basename(ruta)}.")
         except FileNotFoundError:
-            msg = "No encontré ese archivo."
-            self.hablar(msg)
-            return msg
+            return self._say("No encontré ese archivo.")
         except Exception as e:
-            msg = f"No pude eliminar: {e}"
-            self.hablar(msg)
-            return msg
+            return self._say(f"No pude eliminar: {e}")
 
     def _crear_carpeta(self, p):
         ruta = self._resolve(p.get("ruta", ""))
         try:
             os.makedirs(ruta, exist_ok=True)
-            msg = f"Carpeta creada: {os.path.basename(ruta)}."
-            self.hablar(msg)
-            return msg
+            return self._say(f"Carpeta creada: {os.path.basename(ruta)}.")
         except Exception as e:
-            msg = f"No pude crear la carpeta: {e}"
-            self.hablar(msg)
-            return msg
+            return self._say(f"No pude crear la carpeta: {e}")
 
     def _listar_dir(self, p):
         ruta = self._resolve(p.get("ruta", "."))
         try:
             items = sorted(os.listdir(ruta), key=lambda x: (not os.path.isdir(os.path.join(ruta, x)), x.lower()))
             if not items:
-                msg = "La carpeta está vacía."
-                self.hablar(msg)
-                return msg
+                return self._say("La carpeta está vacía.")
 
-            # Colores ANSI
             C_DIR  = "\033[0;34m"
             C_EXE  = "\033[0;32m"
             C_LNK  = "\033[0;36m"
@@ -430,12 +365,11 @@ class ActionExecutor:
             for name in items:
                 full = os.path.join(ruta, name)
                 is_hidden = name.startswith(".")
-
                 try:
-                    stat = os.stat(full)
-                    size = tamaño_legible(stat.st_size)
-                    mtime = datetime.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M")
-                except:
+                    stat_info = os.stat(full)
+                    size = tamaño_legible(stat_info.st_size)
+                    mtime = datetime.datetime.fromtimestamp(stat_info.st_mtime).strftime("%Y-%m-%d %H:%M")
+                except Exception:
                     size = "?"
                     mtime = ""
 
@@ -443,161 +377,116 @@ class ActionExecutor:
                 is_lnk  = os.path.islink(full)
                 is_exe  = os.access(full, os.X_OK) and not is_dir
 
-                # Color selection
                 if is_dir:
-                    color = C_DIR
-                    icon  = "📁"
-                    display = f"{name}/"
+                    color, icon, display = C_DIR, "📁", f"{name}/"
                 elif is_lnk:
-                    color = C_LNK
-                    icon  = "🔗"
-                    display = name
+                    color, icon, display = C_LNK, "🔗", name
                 elif is_exe:
-                    color = C_EXE
-                    icon  = "⚡"
-                    display = name
+                    color, icon, display = C_EXE, "⚡", name
                 else:
-                    color = C_RST
-                    icon  = " "
-                    display = name
+                    color, icon, display = C_RST, " ", name
 
                 if is_hidden:
                     color += C_HID
 
-                # Symlink target
                 link_target = f" → {os.readlink(full)}" if is_lnk else ""
-
                 size_str = f"{size:>8}" if not is_dir else "       " + C_DIM + "DIR" + C_RST
-                lines.append(
-                    f"{color}{icon} {display}{link_target}{C_RST}"
-                    f"  {C_DIM}{size_str}  {mtime}{C_RST}"
-                )
+                lines.append(f"{color}{icon} {display}{link_target}{C_RST}  {C_DIM}{size_str}  {mtime}{C_RST}")
 
             output = "\n".join(lines)
-
             dirs_n = sum(1 for n in items if os.path.isdir(os.path.join(ruta, n)))
             files_n = len(items) - dirs_n
-            voice = f"{dirs_n} carpetas, {files_n} archivos."
-            self.hablar(voice)
+            self.hablar(f"{dirs_n} carpetas, {files_n} archivos.")
             return output
         except PermissionError:
-            msg = f"Sin permiso para listar {ruta}."
-            self.hablar(msg)
-            return msg
+            return self._say(f"Sin permiso para listar {ruta}.")
         except Exception as e:
-            msg = f"No pude listar: {e}"
-            self.hablar(msg)
-            return msg
+            return self._say(f"No pude listar: {e}")
 
     def _pwd(self, p):
         pretty = self._cwd_pretty()
         self.hablar(f"Estoy en {pretty}.")
-        return f"PWD: {self.cwd}"
+        return f"PWD: {self._cwd}"
 
     def _ir(self, p):
         raw = (p.get("directorio") or ".").strip()
 
-        # --- Bookmark management ---
         if raw.startswith("--save") or raw.startswith("-s"):
             name = raw.split(None, 1)[-1].strip() if len(raw.split(None, 1)) > 1 else ""
             if not name:
-                self.hablar("Dime un nombre para el marcador.")
-                return "No name for bookmark"
-            self._bookmarks[name] = self.cwd
+                return self._say("Dime un nombre para el marcador.")
+            self._bookmarks[name] = self._cwd
             self._save_bookmarks()
-            self.hablar(f"Guardé {self._cwd_pretty()} como '{name}'.")
-            return f"Bookmark '{name}' → {self.cwd}"
+            return self._say(f"Guardé {self._cwd_pretty()} como '{name}'.")
 
         if raw.startswith("--delete") or raw.startswith("-d"):
             name = raw.split(None, 1)[-1].strip() if len(raw.split(None, 1)) > 1 else ""
             if name in self._bookmarks:
                 del self._bookmarks[name]
                 self._save_bookmarks()
-                self.hablar(f"Marcador '{name}' eliminado.")
-            else:
-                self.hablar(f"No existe el marcador '{name}'.")
-            return None
+                return self._say(f"Marcador '{name}' eliminado.")
+            return self._say(f"No existe el marcador '{name}'.")
 
         if raw in ("--list", "-l"):
             if not self._bookmarks:
-                self.hablar("No tienes marcadores guardados.")
-            else:
-                lines = [f"  {k} → {v}" for k, v in self._bookmarks.items()]
-                self.hablar(f"{len(self._bookmarks)} marcadores.")
-                return "Marcadores:\n" + "\n".join(lines)
-            return "Sin marcadores."
+                return self._say("No tienes marcadores guardados.")
+            lines = [f"  {k} → {v}" for k, v in self._bookmarks.items()]
+            self.hablar(f"{len(self._bookmarks)} marcadores.")
+            return "Marcadores:\n" + "\n".join(lines)
 
-        # --- Stack navigation ---
         if raw in ("--back", "-", "..-"):
             if not self._dir_stack:
-                self.hablar("No hay directorios anteriores.")
-                return "Stack vacío"
+                return self._say("No hay directorios anteriores.")
             prev = self._dir_stack.pop()
             if not os.path.isdir(prev):
-                self.hablar("El directorio anterior ya no existe.")
-                return f"Ya no existe: {prev}"
-            self.cwd = prev
-            pretty = self._cwd_pretty()
-            self.hablar(f"De vuelta en {pretty}.")
-            return f"CWD → {prev}"
+                return self._say("El directorio anterior ya no existe.")
+            self._cwd = prev
+            return self._say(f"De vuelta en {self._cwd_pretty()}.")
 
-        if raw in ("--stack",):
+        if raw == "--stack":
             if not self._dir_stack:
-                self.hablar("El historial está vacío.")
-            else:
-                lines = [f"  {i}: {d}" for i, d in enumerate(self._dir_stack, 1)]
-                self.hablar(f"{len(self._dir_stack)} directorios en el historial.")
-                return "Historial:\n" + "\n".join(lines)
-            return "Stack vacío"
+                return self._say("El historial está vacío.")
+            lines = [f"  {i}: {d}" for i, d in enumerate(self._dir_stack, 1)]
+            self.hablar(f"{len(self._dir_stack)} directorios en el historial.")
+            return "Historial:\n" + "\n".join(lines)
 
-        # --- Resolve path ---
-        # Check bookmark first (before path resolution)
         if raw in self._bookmarks:
             destino = self._bookmarks[raw]
         else:
             destino = self._resolve(raw)
 
-        # Fuzzy match if destination doesn't exist
         if not os.path.exists(destino):
             parent = os.path.dirname(destino)
             basename = os.path.basename(destino)
             if os.path.isdir(parent):
                 try:
-                    candidates = [d for d in os.listdir(parent)
-                                  if os.path.isdir(os.path.join(parent, d))]
+                    candidates = [d for d in os.listdir(parent) if os.path.isdir(os.path.join(parent, d))]
                     matches = get_close_matches(basename, candidates, n=1, cutoff=0.5)
                     if matches:
                         destino = os.path.join(parent, matches[0])
                 except PermissionError:
                     pass
-
-            # When all else fails, try bookmark fuzzy match
             if not os.path.isdir(destino):
                 bm_matches = get_close_matches(raw, list(self._bookmarks.keys()), n=1, cutoff=0.5)
                 if bm_matches:
                     destino = self._bookmarks[bm_matches[0]]
 
-        # If still doesn't exist
         if not os.path.isdir(destino):
             if os.path.isfile(destino):
                 destino = os.path.dirname(destino)
             else:
-                self.hablar(f"No encontré el directorio {raw}.")
-                return f"Directorio no existe: {destino}"
+                return self._say(f"No encontré el directorio {raw}.")
 
-        # Save current to stack and switch
-        if self.cwd != destino:
-            self._dir_stack.append(self.cwd)
-        self.cwd = destino
-        pretty = self._cwd_pretty()
-        self.hablar(f"En {pretty}.")
-        return f"CWD → {self.cwd}"
+        if self._cwd != destino:
+            self._dir_stack.append(self._cwd)
+        self._cwd = destino
+        self.hablar(f"En {self._cwd_pretty()}.")
+        return f"CWD → {self._cwd}"
 
     def _info_dir(self, p):
         ruta = self._resolve(p.get("ruta", "."))
         if not os.path.isdir(ruta):
-            self.hablar("Eso no es un directorio.")
-            return "No es un directorio."
+            return self._say("Eso no es un directorio.")
         try:
             home = os.path.expanduser("~")
             header_path = ruta.replace(home, "~")
@@ -617,7 +506,7 @@ class ActionExecutor:
                         ext = os.path.splitext(f)[1].lower() or "(sin ext)"
                         by_ext[ext] = by_ext.get(ext, 0) + 1
                         largest.append((s.st_size, fp))
-                    except:
+                    except Exception:
                         pass
             largest.sort(reverse=True, key=lambda x: x[0])
             top5 = "\n".join(f"  {tamaño_legible(s)}  {p}" for s, p in largest[:5])
@@ -633,26 +522,18 @@ class ActionExecutor:
                 f"  Top 5 más grandes:\n{top5}"
             )
         except PermissionError:
-            msg = f"Sin permiso para analizar {ruta}."
-            self.hablar(msg)
-            return msg
+            return self._say(f"Sin permiso para analizar {ruta}.")
         except Exception as e:
-            msg = f"Error analizando directorio: {e}"
-            self.hablar(msg)
-            return msg
+            return self._say(f"Error analizando directorio: {e}")
 
     def _renombrar(self, p):
         origen  = self._resolve(p.get("origen", ""))
         destino = self._resolve(p.get("destino", ""))
         try:
             os.rename(origen, destino)
-            msg = f"Renombrado a {os.path.basename(destino)}."
-            self.hablar(msg)
-            return msg
+            return self._say(f"Renombrado a {os.path.basename(destino)}.")
         except Exception as e:
-            msg = f"No pude renombrar: {e}"
-            self.hablar(msg)
-            return msg
+            return self._say(f"No pude renombrar: {e}")
 
     def _buscar_archivo(self, p):
         result = buscar_archivo(
@@ -660,42 +541,27 @@ class ActionExecutor:
             self._resolve(p.get("directorio", ".")),
             p.get("profundidad", 3),
         )
-        self.hablar(result)
-        return result
+        return self._say(result)
 
     def _nota_guardar(self, p):
-        msg = self.notes.save(p.get("titulo", "sin título"), p.get("contenido", ""))
-        self.hablar(msg)
-        return msg
+        return self._say(self.notes.save(p.get("titulo", "sin título"), p.get("contenido", "")))
 
     def _nota_leer(self, p):
-        msg = self.notes.read(p.get("titulo"))
-        self.hablar(msg)
-        return msg
+        return self._say(self.notes.read(p.get("titulo")))
 
     def _nota_borrar(self, p):
-        msg = self.notes.delete(p.get("titulo", ""))
-        self.hablar(msg)
-        return msg
+        return self._say(self.notes.delete(p.get("titulo", "")))
 
     def _recordatorio(self, p):
-        msg = self.reminders.add(p.get("mensaje", "Recordatorio"), int(p.get("segundos", 60)))
-        self.hablar(msg)
-        return msg
+        return self._say(self.reminders.add(p.get("mensaje", "Recordatorio"), int(p.get("segundos", 60))))
 
     def _clima(self, p):
-        info = obtener_clima(p.get("ciudad", "Madrid"))
-        self.hablar(info)
-        return info
+        return self._say(obtener_clima(p.get("ciudad", "Madrid")))
 
     def _traducir(self, p):
-        traduccion = traducir(p.get("texto", ""), p.get("idioma_destino", "es"))
-        self.hablar(traduccion)
-        return traduccion
+        return self._say(traducir(p.get("texto", ""), p.get("idioma_destino", "es")))
 
     def _ejecutar_python(self, p) -> str:
-        """Ejecuta código Python en un subprocess, retorna stdout+stderr."""
-        import tempfile
         codigo = p.get("codigo", "")
         timeout = p.get("timeout", 30)
         if not codigo.strip():
@@ -710,13 +576,12 @@ class ActionExecutor:
             finally:
                 try:
                     os.unlink(fname)
-                except:
+                except Exception:
                     pass
         except Exception as e:
             return f"Error ejecutando Python: {e}"
 
     def _escribir_y_ejecutar(self, p) -> str:
-        """Escribe un archivo en /tmp y lo ejecuta."""
         nombre = p.get("nombre", "script.py")
         contenido = p.get("contenido", "")
         interprete = p.get("interprete", "python3")
@@ -731,14 +596,13 @@ class ActionExecutor:
             result = ejecutar_cmd(f"{interprete} {ruta}", timeout)
             try:
                 os.unlink(ruta)
-            except:
+            except Exception:
                 pass
             return result or "Script ejecutado sin output."
         except Exception as e:
             return f"Error escribiendo/ejecutando script: {e}"
 
     def _leer_dir_recursivo(self, p) -> str:
-        """Lista árbol de directorio con profundidad controlada y caracteres Unicode."""
         ruta = self._resolve(p.get("ruta", "."))
         profundidad = p.get("profundidad", 3)
         if not os.path.isdir(ruta):
@@ -748,48 +612,34 @@ class ActionExecutor:
             home = os.path.expanduser("~")
             header = ruta.replace(home, "~")
             resultado.append(f"📂 {header}/")
-
             for root, dirs, files in os.walk(ruta):
                 depth = root.replace(ruta, "").count(os.sep)
                 if depth >= profundidad:
                     dirs.clear()
                     continue
-
                 if depth == 0:
-                    continue  # skip root, already printed
-
-                # ─ Tree prefix ─
+                    continue
                 rel = root[len(ruta) + 1:]
                 parts = rel.split(os.sep)
-                prefix = ""
-                for i in range(len(parts) - 1):
-                    prefix += "│   "
-                prefix += "├── "
-
+                prefix = "│   " * (len(parts) - 1) + "├── "
                 resultado.append(f"{prefix}{os.path.basename(root)}/")
-
-                files_sorted = sorted(files)
+                files_sorted = sorted(files)[:20]
                 n_files = len(files_sorted)
-                for i, f in enumerate(files_sorted[:20]):
+                for i, f in enumerate(files_sorted):
                     try:
-                        fp = os.path.join(root, f)
-                        sz = tamaño_legible(os.stat(fp).st_size)
-                    except:
+                        sz = tamaño_legible(os.stat(os.path.join(root, f)).st_size)
+                    except Exception:
                         sz = "?"
-                    is_last = (i == n_files - 1) or (i == 19 and n_files > 20)
+                    is_last = (i == n_files - 1)
                     file_prefix = prefix.replace("├── ", "│   ") + ("└── " if is_last else "├── ")
                     resultado.append(f"{file_prefix}{f}  ({sz})")
-
-                if n_files > 20:
-                    more_prefix = prefix.replace("├── ", "│   ") + "└── "
-                    resultado.append(f"{more_prefix}... y {n_files - 20} archivos más")
-
+                if len(files) > 20:
+                    resultado.append(f"{prefix.replace('├── ', '│   ')}└── ... y {len(files) - 20} archivos más")
             return "\n".join(resultado[:300]) or "Directorio vacío."
         except Exception as e:
             return f"Error listando directorio: {e}"
 
     def _buscar_en_archivos(self, p) -> str:
-        """Grep en archivos dentro de un directorio."""
         patron = p.get("patron", "")
         directorio = self._resolve(p.get("directorio", "."))
         extension = p.get("extension", "")
@@ -804,7 +654,6 @@ class ActionExecutor:
             return f"Error buscando en archivos: {e}"
 
     def _git_cmd(self, p) -> str:
-        """Ejecuta un comando git básico."""
         subcmd = p.get("subcmd", "status")
         directorio = self._resolve(p.get("directorio", "."))
         safe_cmds = {"status", "log", "diff", "add", "commit", "push", "pull",
