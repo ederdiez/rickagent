@@ -81,6 +81,37 @@ class JARVIS:
         self.tts.say("Hasta pronto, amo.")
         sys.exit(0)
 
+    def _handle_command(self, line: str):
+        parts = line.split(maxsplit=1)
+        cmd = parts[0].lower() if parts else ""
+        arg = parts[1] if len(parts) > 1 else ""
+
+        if cmd == "/cd":
+            self.executor.run_silent("IR", {"directorio": arg or "~"})
+            self._print_cwd()
+        elif cmd == "/ls":
+            result = self.executor.run_silent("LISTAR_DIR", {"ruta": arg or "."})
+            if result:
+                print(result)
+        else:
+            print(f"Comando desconocido: {cmd}. Usa /cd o /ls.")
+
+    def _check_stdin(self) -> bool:
+        import select
+        try:
+            if select.select([sys.stdin], [], [], 0) == ([sys.stdin], [], []):
+                data = os.read(sys.stdin.fileno(), 1024)
+                if data:
+                    line = data.decode("utf-8", errors="replace").strip()
+                    if line.startswith("/"):
+                        self._handle_command(line)
+                    elif line:
+                        self.process_command(line)
+                    return True
+        except Exception:
+            pass
+        return False
+
     def process_command(self, texto: str):
         log.info(f"Tú: {texto}")
         texto_lower = texto.lower().strip()
@@ -140,16 +171,25 @@ class JARVIS:
         self._print_cwd()
 
     def run_push(self):
-        self.tts.say("RICK listo. Enter para hablar, Enter para parar.")
+        self.tts.say("RICK listo. t + Enter para hablar, /cmd para comandos.")
         print()
 
         while True:
             try:
                 cwd_display = self._cwd_color()
-                input(f"\033[2m{cwd_display} >> Enter para EMPEZAR...\033[0m")
+                line = input(f"\033[2m{cwd_display} $ \033[0m").strip()
             except KeyboardInterrupt:
                 self.tts.say("Hasta pronto.")
                 sys.exit(0)
+
+            if line == "t" or not line:
+                pass
+            elif line.startswith("/"):
+                self._handle_command(line)
+                continue
+            else:
+                self.process_command(line)
+                continue
 
             print(f"\033[0;31m🔴 {self._cwd_color()}Grabando... (Enter para PARAR)\033[0m")
 
@@ -227,6 +267,8 @@ class JARVIS:
             if audio is None:
                 silence_ticks += 1
                 cwd_ticks += 1
+                if cwd_ticks % 10 == 0:
+                    self._check_stdin()
                 if cwd_ticks % 30 == 0:
                     self._print_cwd()
                 elif cwd_ticks % 10 == 0:
