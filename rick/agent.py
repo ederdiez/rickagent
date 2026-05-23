@@ -1,128 +1,14 @@
 import os
 import time
 import json
-from typing import Optional
 
 from .logging_setup import log
-from .config import AGENT_SYSTEM_PROMPT
+from .config import AGENT_SYSTEM_PROMPT, build_system_prompt
 from .llm import _extract_json, consultar_llm
+from .skills.base import get_tool_defs, get_prompt_block
 
 MAX_STEPS = 20
 AGENT_MAX_TOKENS = 4096
-
-
-AGENT_TOOLS = [
-    {
-        "name": "EJECUTAR_CMD",
-        "description": "Ejecuta un comando de shell arbitrario y retorna stdout+stderr.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "cmd": {"type": "string", "description": "Comando shell a ejecutar"},
-                "timeout": {"type": "integer", "description": "Timeout en segundos", "default": 10}
-            },
-            "required": ["cmd"]
-        }
-    },
-    {
-        "name": "EJECUTAR_PYTHON",
-        "description": "Ejecuta código Python, retorna output y errores.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "codigo": {"type": "string", "description": "Código Python a ejecutar"},
-                "timeout": {"type": "integer", "description": "Timeout en segundos", "default": 30}
-            },
-            "required": ["codigo"]
-        }
-    },
-    {
-        "name": "CREAR_ARCHIVO",
-        "input_schema": {"type": "object", "properties": {
-            "ruta": {"type": "string"}, "contenido": {"type": "string"}
-        }, "required": ["ruta", "contenido"]}
-    },
-    {
-        "name": "LEER_ARCHIVO",
-        "input_schema": {"type": "object", "properties": {
-            "ruta": {"type": "string"}
-        }, "required": ["ruta"]}
-    },
-    {
-        "name": "MOVER_ARCHIVO",
-        "input_schema": {"type": "object", "properties": {
-            "origen": {"type": "string"}, "destino": {"type": "string"}
-        }, "required": ["origen", "destino"]}
-    },
-    {
-        "name": "COPIAR_ARCHIVO",
-        "input_schema": {"type": "object", "properties": {
-            "origen": {"type": "string"}, "destino": {"type": "string"}
-        }, "required": ["origen", "destino"]}
-    },
-    {
-        "name": "RENOMBRAR",
-        "input_schema": {"type": "object", "properties": {
-            "origen": {"type": "string"}, "destino": {"type": "string"}
-        }, "required": ["origen", "destino"]}
-    },
-    {
-        "name": "BORRAR_ARCHIVO",
-        "input_schema": {"type": "object", "properties": {
-            "ruta": {"type": "string"}
-        }, "required": ["ruta"]}
-    },
-    {
-        "name": "CREAR_CARPETA",
-        "input_schema": {"type": "object", "properties": {
-            "ruta": {"type": "string"}
-        }, "required": ["ruta"]}
-    },
-    {"name": "IR", "description": "Cambia el directorio de trabajo.",
-     "input_schema": {"type": "object", "properties": {
-         "directorio": {"type": "string"}
-     }, "required": ["directorio"]}},
-    {"name": "PWD", "input_schema": {"type": "object", "properties": {}}},
-    {"name": "INFO_DIR", "input_schema": {"type": "object", "properties": {
-        "ruta": {"type": "string"}
-    }}},
-    {"name": "LISTAR_DIR", "input_schema": {"type": "object", "properties": {
-        "ruta": {"type": "string"}
-    }}},
-    {"name": "LEER_DIR_RECURSIVO", "input_schema": {"type": "object", "properties": {
-        "ruta": {"type": "string"}, "profundidad": {"type": "integer", "default": 3}
-    }, "required": ["ruta"]}},
-    {"name": "BUSCAR_EN_ARCHIVOS", "input_schema": {"type": "object", "properties": {
-        "patron": {"type": "string"}, "directorio": {"type": "string"},
-        "extension": {"type": "string"}
-    }, "required": ["patron", "directorio"]}},
-    {"name": "BUSCAR_ARCHIVO", "input_schema": {"type": "object", "properties": {
-        "nombre": {"type": "string"}, "directorio": {"type": "string"},
-        "profundidad": {"type": "integer"}
-    }, "required": ["nombre", "directorio"]}},
-    {"name": "ESCRIBIR_Y_EJECUTAR", "input_schema": {"type": "object", "properties": {
-        "nombre": {"type": "string"}, "contenido": {"type": "string"},
-        "interprete": {"type": "string", "default": "python3"}, "timeout": {"type": "integer", "default": 30}
-    }, "required": ["nombre", "contenido"]}},
-    {"name": "GIT_CMD", "input_schema": {"type": "object", "properties": {
-        "subcmd": {"type": "string"}, "directorio": {"type": "string"}
-    }, "required": ["subcmd", "directorio"]}},
-    {"name": "SISTEMA_INFO", "input_schema": {"type": "object", "properties": {}}},
-    {"name": "ABRIR_URL", "input_schema": {"type": "object", "properties": {
-        "url": {"type": "string"}
-    }, "required": ["url"]}},
-    {"name": "SCREENSHOT", "input_schema": {"type": "object", "properties": {}}},
-    {"name": "BOOKMARK_GUARDAR", "description": "Guarda el directorio actual como marcador con un nombre.",
-     "input_schema": {"type": "object", "properties": {
-         "nombre": {"type": "string"}
-     }, "required": ["nombre"]}},
-    {"name": "BOOKMARK_BORRAR", "description": "Elimina un marcador por nombre.",
-     "input_schema": {"type": "object", "properties": {
-         "nombre": {"type": "string"}
-     }, "required": ["nombre"]}},
-    {"name": "BOOKMARK_LISTAR", "description": "Lista todos los marcadores guardados.",
-     "input_schema": {"type": "object", "properties": {}}},
-]
 
 
 def _is_complex_task(texto: str) -> bool:
@@ -142,11 +28,12 @@ def _is_complex_task(texto: str) -> bool:
 
 
 def _build_tools_description() -> str:
+    tools = get_tool_defs()
     lines = ["HERRAMIENTAS DISPONIBLES:\n"]
-    for tool in AGENT_TOOLS:
-        name = tool["name"]
-        desc = tool.get("description", "")
-        props = tool["input_schema"].get("properties", {})
+    for t in tools:
+        name = t["name"]
+        desc = t.get("description", "")
+        props = t["input_schema"].get("properties", {})
         params = ", ".join(props.keys())
         lines.append(f"- {name}({params}): {desc}" if desc else f"- {name}({params})")
     return "\n".join(lines)
@@ -179,6 +66,7 @@ def _run_agent_anthropic(task: str, cfg: dict, memory, executor, tts) -> str:
     messages = [{"role": "user", "content": task}]
     tts.say("Entendido. Déjame trabajar en eso.")
 
+    tools = executor.get_tool_definitions()
     start_time = time.time()
     for step in range(1, MAX_STEPS + 1):
         elapsed = time.time() - start_time
@@ -193,7 +81,7 @@ def _run_agent_anthropic(task: str, cfg: dict, memory, executor, tts) -> str:
                 model=cfg.get("agent_model", "claude-haiku-4-5"),
                 max_tokens=AGENT_MAX_TOKENS,
                 system=AGENT_SYSTEM_PROMPT,
-                tools=AGENT_TOOLS,
+                tools=tools,
                 messages=messages,
             )
         except Exception as e:
@@ -294,7 +182,7 @@ Si la tarea está completa, usa:
             resp = json.loads(json_str)
         except (json.JSONDecodeError, ValueError):
             log.warning(f"[Agente] JSON falló, reintentando: {raw_response[:120]}")
-            conversation.append("[ERROR]: No respondiste con JSON válido. Reintenta usando solo JSON puro sin markdown.")
+            conversation.append("[ERROR]: No respondiste con JSON válido.")
             continue
 
         accion = resp.get("accion", "CONVERSAR").upper()

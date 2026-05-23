@@ -11,14 +11,15 @@ import numpy as np
 import sounddevice as sd
 
 from .logging_setup import setup_logging, log
-from .config import CFG
+from .config import CFG, build_system_prompt
 from .audio import VADRecorder, load_whisper, transcribir
 from .llm import consultar_llm
 from .tts import TTS
 from .memory import ConversationMemory, NotesManager
 from .reminders import ReminderManager
 from .executor import ActionExecutor
-from .agent import run_agent_task, _is_complex_task, AGENT_TOOLS
+from .agent import run_agent_task, _is_complex_task
+from .skills.base import get_prompt_block
 
 
 class JARVIS:
@@ -34,6 +35,7 @@ class JARVIS:
         self.executor.set_hablar(self.tts.say)
         self.whisper_model = None
         self.silent_mode = False
+        self._reactive_prompt = build_system_prompt(get_prompt_block())
 
     def _load_whisper(self):
         device = "cuda" if self._has_cuda() else "cpu"
@@ -156,7 +158,7 @@ class JARVIS:
 
         log.info("[main] Modo reactivo")
         prompt = self.memory.build_prompt(texto)
-        resp   = consultar_llm(prompt, self.cfg)
+        resp   = consultar_llm(prompt, self.cfg, system_prompt=self._reactive_prompt)
         accion = resp.get("accion", "CONVERSAR")
         params = resp.get("parametros", {})
         voz    = resp.get("respuesta_voz", "Hecho.")
@@ -295,7 +297,6 @@ class JARVIS:
 
     def start(self):
         log.info("Iniciando RICK v2...")
-        self.executor.validate_tools(AGENT_TOOLS)
         self._load_whisper()
         if self.cfg.get("provider", "ollama") == "ollama":
             self._check_ollama()
@@ -318,7 +319,7 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     ap.add_argument("--realtime",   action="store_true",     help="Modo conversación (escucha continua)")
-    ap.add_argument("--push",       action="store_true",     help="Modo push-to-talk (Enter)")
+    ap.add_argument("--push",       action="store_true",     help="Modo push-to-talk (t+Enter)")
     ap.add_argument("--history",    action="store_true",     help="Mostrar historial y salir")
     ap.add_argument("--daemon",     action="store_true",     help="Desacoplar del terminal (nohup)")
     ap.add_argument("--no-voice",   action="store_true",     help="Desactivar TTS (solo texto)")
